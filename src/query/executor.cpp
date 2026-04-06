@@ -70,6 +70,7 @@ ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
     Page* p = bpm_->NewPage(pid);
     if (!p) return {false, "Could not allocate page for table.", {}, {}};
     schema.root_page_id = pid;
+    schema.page_ids.push_back(pid);  // track first page
     bpm_->UnpinPage(pid, true);
 
     catalog_->CreateTable(schema);
@@ -92,7 +93,6 @@ std::string Executor::SerializeRow(const TableSchema& schema,
             int32_t val = std::stoi(values[i]);
             data.append(reinterpret_cast<char*>(&val), sizeof(int32_t));
         } else {
-            // VARCHAR: fixed size with null padding
             std::string s = values[i];
             s.resize(col.size, '\0');
             data.append(s);
@@ -114,7 +114,6 @@ Row Executor::DeserializeRow(const TableSchema& schema,
             offset += sizeof(int32_t);
         } else {
             std::string s(data + offset, col.size);
-            // trim nulls
             s.erase(std::find(s.begin(), s.end(), '\0'), s.end());
             row.push_back(s);
             offset += col.size;
@@ -126,7 +125,6 @@ Row Executor::DeserializeRow(const TableSchema& schema,
 bool Executor::MatchesConditions(const Row& row, const TableSchema& schema,
                                   const std::vector<Condition>& conditions) {
     for (const auto& cond : conditions) {
-        // Find column index
         int col_idx = -1;
         for (size_t i = 0; i < schema.columns.size(); i++) {
             if (schema.columns[i].name == cond.column) { col_idx = i; break; }
@@ -159,21 +157,35 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
 
     std::string data = SerializeRow(*schema, stmt->values);
 
-    // Find a page with free space
-    page_id_t pid = schema->root_page_id;
-    Page* page = bpm_->FetchPage(pid);
-    if (!page) return {false, "Cannot fetch page.", {}, {}};
+    // Try inserting into existing pages
+    for (auto pid : schema->page_ids) {
+        Page* page = bpm_->FetchPage(pid);
+        if (!page) continue;
 
-    slot_id_t slot = page->InsertRecord(data.c_str(), (uint16_t)data.size());
-    if (slot == UINT16_MAX) {
-        // Page full — allocate new page
+        slot_id_t slot = page->InsertRecord(data.c_str(), (uint16_t)data.size());
+        if (slot != UINT16_MAX) {
+            bpm_->UnpinPage(pid, true);
+            catalog_->Save();
+            return {true, "1 row inserted.", {}, {}};
+        }
         bpm_->UnpinPage(pid, false);
-        page = bpm_->NewPage(pid);
-        if (!page) return {false, "Out of space.", {}, {}};
-        slot = page->InsertRecord(data.c_str(), (uint16_t)data.size());
     }
 
-    bpm_->UnpinPage(pid, true);
+    // All pages full — allocate a new page
+    page_id_t new_pid;
+    Page* new_page = bpm_->NewPage(new_pid);
+    if (!new_page) return {false, "Out of space.", {}, {}};
+
+    slot_id_t slot = new_page->InsertRecord(data.c_str(), (uint16_t)data.size());
+    bpm_->UnpinPage(new_pid, true);
+
+    if (slot == UINT16_MAX)
+        return {false, "Record too large for page.", {}, {}};
+
+    // Track new page in catalog
+    schema->page_ids.push_back(new_pid);
+    catalog_->Save();
+
     return {true, "1 row inserted.", {}, {}};
 }
 
@@ -182,7 +194,6 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
 
-    // Determine which columns to show
     std::vector<std::string> col_names;
     std::vector<int> col_indices;
     bool select_all = (stmt->columns.size() == 1 && stmt->columns[0] == "*");
@@ -204,11 +215,11 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
     }
 
     Result rows;
-    // Scan all pages starting from root
-    page_id_t pid = schema->root_page_id;
-    while (pid != INVALID_PAGE_ID) {
+
+    // ✅ Scan ALL pages — multi-page support
+    for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
-        if (!page) break;
+        if (!page) continue;
 
         uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
         for (uint16_t s = 0; s < slot_count; s++) {
@@ -225,7 +236,6 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
             }
         }
         bpm_->UnpinPage(pid, false);
-        break; // single page scan for now
     }
 
     return {true, std::to_string(rows.size()) + " row(s) returned.", rows, col_names};
@@ -236,24 +246,28 @@ ExecutionResult Executor::ExecDelete(std::shared_ptr<Statement> stmt) {
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
 
-    page_id_t pid = schema->root_page_id;
-    Page* page = bpm_->FetchPage(pid);
-    if (!page) return {false, "Cannot fetch page.", {}, {}};
-
     int deleted = 0;
-    uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
-    for (uint16_t s = 0; s < slot_count; s++) {
-        char buf[PAGE_SIZE];
-        uint16_t len = 0;
-        if (page->GetRecord(s, buf, len)) {
-            Row row = DeserializeRow(*schema, buf, len);
-            if (MatchesConditions(row, *schema, stmt->conditions)) {
-                page->DeleteRecord(s);
-                deleted++;
+
+    // ✅ Delete across ALL pages
+    for (auto pid : schema->page_ids) {
+        Page* page = bpm_->FetchPage(pid);
+        if (!page) continue;
+
+        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+        for (uint16_t s = 0; s < slot_count; s++) {
+            char buf[PAGE_SIZE];
+            uint16_t len = 0;
+            if (page->GetRecord(s, buf, len)) {
+                Row row = DeserializeRow(*schema, buf, len);
+                if (MatchesConditions(row, *schema, stmt->conditions)) {
+                    page->DeleteRecord(s);
+                    deleted++;
+                }
             }
         }
+        bpm_->UnpinPage(pid, true);
     }
-    bpm_->UnpinPage(pid, true);
+
     return {true, std::to_string(deleted) + " row(s) deleted.", {}, {}};
 }
 
@@ -262,7 +276,6 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt) {
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
 
-    // Find SET column index
     int set_col_idx = -1;
     for (size_t i = 0; i < schema->columns.size(); i++) {
         if (schema->columns[i].name == stmt->set_column) {
@@ -272,27 +285,31 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt) {
     if (set_col_idx < 0)
         return {false, "Column '" + stmt->set_column + "' not found.", {}, {}};
 
-    page_id_t pid = schema->root_page_id;
-    Page* page = bpm_->FetchPage(pid);
-    if (!page) return {false, "Cannot fetch page.", {}, {}};
-
     int updated = 0;
-    uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
-    for (uint16_t s = 0; s < slot_count; s++) {
-        char buf[PAGE_SIZE];
-        uint16_t len = 0;
-        if (page->GetRecord(s, buf, len)) {
-            Row row = DeserializeRow(*schema, buf, len);
-            if (MatchesConditions(row, *schema, stmt->conditions)) {
-                row[set_col_idx] = stmt->set_value;
-                page->DeleteRecord(s);
-                std::string new_data = SerializeRow(*schema, row);
-                page->InsertRecord(new_data.c_str(), (uint16_t)new_data.size());
-                updated++;
+
+    // ✅ Update across ALL pages
+    for (auto pid : schema->page_ids) {
+        Page* page = bpm_->FetchPage(pid);
+        if (!page) continue;
+
+        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+        for (uint16_t s = 0; s < slot_count; s++) {
+            char buf[PAGE_SIZE];
+            uint16_t len = 0;
+            if (page->GetRecord(s, buf, len)) {
+                Row row = DeserializeRow(*schema, buf, len);
+                if (MatchesConditions(row, *schema, stmt->conditions)) {
+                    row[set_col_idx] = stmt->set_value;
+                    page->DeleteRecord(s);
+                    std::string new_data = SerializeRow(*schema, row);
+                    page->InsertRecord(new_data.c_str(), (uint16_t)new_data.size());
+                    updated++;
+                }
             }
         }
+        bpm_->UnpinPage(pid, true);
     }
-    bpm_->UnpinPage(pid, true);
+
     return {true, std::to_string(updated) + " row(s) updated.", {}, {}};
 }
 

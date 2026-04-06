@@ -40,7 +40,12 @@ TableSchema* Catalog::GetTable(const std::string& table_name) {
 void Catalog::Save() {
     std::ofstream f(catalog_file_);
     for (auto& [name, schema] : tables_) {
-        f << "TABLE " << schema.table_name << " " << schema.root_page_id << "\n";
+        // Save page IDs on one line
+        f << "TABLE " << schema.table_name << " " << schema.root_page_id;
+        f << " PAGES " << schema.page_ids.size();
+        for (auto pid : schema.page_ids) f << " " << pid;
+        f << "\n";
+
         for (auto& col : schema.columns) {
             f << "COL " << col.name << " "
               << (col.type == DataType::INT ? "INT" : "VARCHAR") << " "
@@ -65,6 +70,23 @@ void Catalog::Load() {
         if (tag == "TABLE") {
             TableSchema schema;
             ss >> schema.table_name >> schema.root_page_id;
+
+            // Load page IDs if present
+            std::string pages_tag;
+            if (ss >> pages_tag && pages_tag == "PAGES") {
+                size_t count;
+                ss >> count;
+                for (size_t i = 0; i < count; i++) {
+                    uint32_t pid;
+                    ss >> pid;
+                    schema.page_ids.push_back(pid);
+                }
+            }
+
+            // If no page_ids saved, add root_page_id
+            if (schema.page_ids.empty() && schema.root_page_id != UINT32_MAX)
+                schema.page_ids.push_back(schema.root_page_id);
+
             tables_[schema.table_name] = schema;
             current = &tables_[schema.table_name];
         } else if (tag == "COL" && current) {

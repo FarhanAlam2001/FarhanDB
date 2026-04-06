@@ -17,9 +17,10 @@ struct Column {
 };
 
 struct TableSchema {
-    std::string         table_name;
-    std::vector<Column> columns;
-    uint32_t            root_page_id;
+    std::string              table_name;
+    std::vector<Column>      columns;
+    uint32_t                 root_page_id;
+    std::vector<uint32_t>    page_ids;   // all pages for this table
 };
 
 class Catalog {
