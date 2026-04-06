@@ -173,7 +173,7 @@ FarhanDB/
 - [x] Query executor (SELECT, INSERT, UPDATE, DELETE)
 - [x] ACID transactions
 - [x] Beginner mode interface
-- [ ] Multi-page table scanning
+- [x] Multi-page table scanning
 - [ ] JOIN support
 - [ ] Aggregate functions (COUNT, SUM, AVG)
 - [ ] Query optimizer
