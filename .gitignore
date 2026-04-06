@@ -1,0 +1,29 @@
+# Build directory
+build/
+
+# Database files (personal data)
+*.db
+*.wal
+*.catalog
+
+# Compiled binaries
+*.exe
+*.out
+*.o
+*.obj
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE files
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Windows
+Thumbs.db
+Desktop.ini
