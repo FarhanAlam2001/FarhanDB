@@ -27,7 +27,7 @@ A fully functional relational database engine built from scratch in **C++17**, f
 CREATE TABLE students (id INT PRIMARY KEY, name VARCHAR(50), age INT);
 
 -- Insert records
-INSERT INTO students VALUES (1, 'Farhan', 21);
+INSERT INTO students VALUES (1, 'John', 21);
 
 -- Query records
 SELECT * FROM students;
@@ -44,7 +44,7 @@ DROP TABLE students;
 
 -- Transactions
 BEGIN;
-INSERT INTO students VALUES (2, 'Ahmed', 19);
+INSERT INTO students VALUES (2, 'Hamilton', 19);
 COMMIT;
 ROLLBACK;
 ```
