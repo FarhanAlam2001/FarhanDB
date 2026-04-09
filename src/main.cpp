@@ -16,6 +16,7 @@
 #include "query/executor.h"
 #include "transaction/lock_manager.h"
 #include "transaction/transaction_manager.h"
+#include "server/server.h"
 
 using namespace FarhanDB;
 
@@ -474,7 +475,8 @@ int main() {
         std::cout << "  Welcome! How would you like to use FarhanDB?\n" << std::endl;
         std::cout << "  1. Beginner Mode  (step-by-step menu)" << std::endl;
         std::cout << "  2. SQL Mode       (type SQL queries)" << std::endl;
-        std::cout << "  3. Exit" << std::endl;
+        std::cout << "  3. Server Mode    (TCP server on port 5555)" << std::endl;
+        std::cout << "  4. Exit" << std::endl;
         PrintLine('-');
         std::cout << "  Enter choice: ";
 
@@ -485,7 +487,12 @@ int main() {
         switch (choice) {
             case 1: BeginnerMode(executor.get(), catalog.get()); break;
             case 2: SQLMode(executor.get()); break;
-            case 3:
+            case 3: {
+                TCPServer server(executor.get(), 5555);
+                server.Start();
+                break;
+            }
+            case 4:
                 std::cout << "\n  Goodbye!\n" << std::endl;
                 bpm->FlushAllPages();
                 wal->Flush();

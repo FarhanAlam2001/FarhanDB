@@ -19,9 +19,15 @@ set(SOURCES
     src/query/executor.cpp
     src/transaction/lock_manager.cpp
     src/transaction/transaction_manager.cpp
+    src/server/server.cpp
     src/main.cpp
 )
 
 add_executable(farhandb ${SOURCES})
 
 target_compile_options(farhandb PRIVATE -Wall -Wextra -O2)
+
+# Link Winsock on Windows
+if(WIN32)
+    target_link_libraries(farhandb ws2_32)
+endif()

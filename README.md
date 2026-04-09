@@ -211,7 +211,7 @@ FarhanDB/
 - [x] JOIN support
 - [x] Aggregate functions (COUNT, SUM, AVG, MAX, MIN)
 - [x] Query optimizer
-- [ ] Network/TCP interface
+- [x] Network/TCP interface
 
 ---
 
