@@ -32,6 +32,7 @@ This project was built to deeply understand how real-world databases like MySQL 
 - **Aggregate Functions** — COUNT, SUM, AVG, MAX, MIN
 - **JOIN Support** — Inner join across multiple tables
 - **Query Optimizer** — Primary key scan, predicate pushdown, join reordering
+- **TCP Network Server** — Accept SQL connections on port 5555
 - **Beginner Mode** — Step-by-step menu interface for non-SQL users
 - **SQL Mode** — Direct SQL query interface
 
@@ -83,7 +84,8 @@ ROLLBACK;
 ```
 ┌─────────────────────────────────────┐
 │           User Interface            │
-│    (Beginner Mode / SQL Mode)       │
+│  Beginner Mode / SQL Mode /         │
+│  TCP Server (port 5555)             │
 ├─────────────────────────────────────┤
 │           Query Layer               │
 │  Lexer → Parser → Optimizer →       │
@@ -139,9 +141,10 @@ cmake --build .
 When you run FarhanDB you will be greeted with a mode selection:
 
 ```
-1. Beginner Mode  (step-by-step menu)
-2. SQL Mode       (type SQL queries)
-3. Exit
+1. Beginner Mode   (step-by-step menu)
+2. SQL Mode        (type SQL queries)
+3. Server Mode     (TCP server on port 5555)
+4. Exit
 ```
 
 ### Beginner Mode
@@ -155,6 +158,13 @@ Perfect for users who don't know SQL. Just follow the prompts:
 For users who know SQL — type any supported SQL query ending with `;`
 
 Type `menu` to go back, `exit` to quit.
+
+### Server Mode
+Starts a TCP server on port 5555. Connect from any program:
+```bash
+telnet localhost 5555
+```
+Then type SQL queries directly. Multiple clients can connect simultaneously.
 
 ---
 
@@ -191,6 +201,8 @@ FarhanDB/
 │   ├── transaction/
 │   │   ├── lock_manager.cpp        # Locking
 │   │   └── transaction_manager.cpp # Transaction management
+│   ├── server/
+│   │   └── server.cpp              # TCP network server
 │   └── main.cpp                    # Entry point + UI
 ├── include/                        # Header files
 ├── CMakeLists.txt
