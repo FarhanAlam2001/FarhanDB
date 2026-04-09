@@ -1,6 +1,7 @@
 #pragma once
 #include "query/parser.h"
 #include "query/catalog.h"
+#include "query/optimizer.h"
 #include "storage/buffer_pool.h"
 #include "transaction/transaction_manager.h"
 #include "transaction/lock_manager.h"
@@ -17,6 +18,7 @@ struct ExecutionResult {
     std::string message;
     Result      rows;
     std::vector<std::string> column_names;
+    std::string query_plan;  // ✅ shows optimizer decision
 };
 
 class Executor {
@@ -28,21 +30,25 @@ public:
 
     ExecutionResult Execute(std::shared_ptr<Statement> stmt);
 
+    // ✅ EXPLAIN — show query plan without executing
+    std::string     Explain(std::shared_ptr<Statement> stmt);
+
 private:
     BufferPoolManager*  bpm_;
     Catalog*            catalog_;
     TransactionManager* txn_mgr_;
     LockManager*        lock_mgr_;
+    QueryOptimizer      optimizer_;  // ✅ optimizer instance
     txn_id_t            current_txn_id_;
 
     ExecutionResult ExecCreateTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecDropTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecInsert(std::shared_ptr<Statement> stmt);
-    ExecutionResult ExecSelect(std::shared_ptr<Statement> stmt);
-    ExecutionResult ExecDelete(std::shared_ptr<Statement> stmt);
-    ExecutionResult ExecUpdate(std::shared_ptr<Statement> stmt);
+    ExecutionResult ExecSelect(std::shared_ptr<Statement> stmt, const QueryPlan& plan);
+    ExecutionResult ExecDelete(std::shared_ptr<Statement> stmt, const QueryPlan& plan);
+    ExecutionResult ExecUpdate(std::shared_ptr<Statement> stmt, const QueryPlan& plan);
     ExecutionResult ExecAggregate(std::shared_ptr<Statement> stmt);
-    ExecutionResult ExecJoin(std::shared_ptr<Statement> stmt); // ✅ NEW
+    ExecutionResult ExecJoin(std::shared_ptr<Statement> stmt);
 
     std::string     SerializeRow(const TableSchema& schema,
                                  const std::vector<std::string>& values);
@@ -51,9 +57,12 @@ private:
     bool            MatchesConditions(const Row& row,
                                       const TableSchema& schema,
                                       const std::vector<Condition>& conditions);
-
-    // Helper to scan all rows from a table
     Result          ScanTable(TableSchema* schema);
+
+    // ✅ Optimized primary key scan
+    Result          PKScan(TableSchema* schema,
+                           const std::string& pk_col,
+                           const std::string& pk_value);
 };
 
 } // namespace FarhanDB

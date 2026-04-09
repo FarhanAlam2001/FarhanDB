@@ -176,7 +176,7 @@ FarhanDB/
 - [x] Multi-page table scanning
 - [x] JOIN support
 - [x] Aggregate functions (COUNT, SUM, AVG)
-- [ ] Query optimizer
+- [x] Query optimizer
 - [ ] Network/TCP interface
 
 ---

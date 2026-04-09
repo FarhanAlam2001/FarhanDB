@@ -13,20 +13,41 @@ Executor::Executor(BufferPoolManager* bpm, Catalog* catalog,
                    TransactionManager* txn_mgr, LockManager* lock_mgr)
     : bpm_(bpm), catalog_(catalog),
       txn_mgr_(txn_mgr), lock_mgr_(lock_mgr),
+      optimizer_(catalog),
       current_txn_id_(INVALID_TXN_ID) {}
+
+std::string Executor::Explain(std::shared_ptr<Statement> stmt) {
+    QueryPlan plan = optimizer_.Optimize(stmt);
+    return optimizer_.ExplainPlan(plan);
+}
 
 ExecutionResult Executor::Execute(std::shared_ptr<Statement> stmt) {
     try {
         switch (stmt->type) {
-            case StatementType::CREATE_TABLE:  return ExecCreateTable(stmt);
-            case StatementType::DROP_TABLE:    return ExecDropTable(stmt);
-            case StatementType::INSERT:        return ExecInsert(stmt);
-            case StatementType::SELECT:
+            case StatementType::CREATE_TABLE: return ExecCreateTable(stmt);
+            case StatementType::DROP_TABLE:   return ExecDropTable(stmt);
+            case StatementType::INSERT:       return ExecInsert(stmt);
+            case StatementType::SELECT: {
                 if (!stmt->aggregate_func.empty()) return ExecAggregate(stmt);
-                if (!stmt->join_table.empty())     return ExecJoin(stmt); // ✅
-                return ExecSelect(stmt);
-            case StatementType::DELETE:        return ExecDelete(stmt);
-            case StatementType::UPDATE:        return ExecUpdate(stmt);
+                if (!stmt->join_table.empty())     return ExecJoin(stmt);
+                // ✅ Run optimizer before SELECT
+                QueryPlan plan = optimizer_.Optimize(stmt);
+                auto result = ExecSelect(stmt, plan);
+                result.query_plan = optimizer_.ExplainPlan(plan);
+                return result;
+            }
+            case StatementType::DELETE: {
+                QueryPlan plan = optimizer_.Optimize(stmt);
+                auto result = ExecDelete(stmt, plan);
+                result.query_plan = optimizer_.ExplainPlan(plan);
+                return result;
+            }
+            case StatementType::UPDATE: {
+                QueryPlan plan = optimizer_.Optimize(stmt);
+                auto result = ExecUpdate(stmt, plan);
+                result.query_plan = optimizer_.ExplainPlan(plan);
+                return result;
+            }
             case StatementType::BEGIN_TXN: {
                 auto* txn = txn_mgr_->Begin();
                 current_txn_id_ = txn->id;
@@ -58,8 +79,8 @@ ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
         return {false, "Table '" + stmt->table_name + "' already exists.", {}, {}};
 
     TableSchema schema;
-    schema.table_name    = stmt->table_name;
-    schema.root_page_id  = INVALID_PAGE_ID;
+    schema.table_name   = stmt->table_name;
+    schema.root_page_id = INVALID_PAGE_ID;
 
     for (auto& cd : stmt->column_defs) {
         Column col;
@@ -151,19 +172,48 @@ bool Executor::MatchesConditions(const Row& row, const TableSchema& schema,
     return true;
 }
 
-// Helper — scan all rows from a table
 Result Executor::ScanTable(TableSchema* schema) {
     Result rows;
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;
-
         uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
         for (uint16_t s = 0; s < slot_count; s++) {
             char buf[PAGE_SIZE];
             uint16_t len = 0;
             if (page->GetRecord(s, buf, len))
                 rows.push_back(DeserializeRow(*schema, buf, len));
+        }
+        bpm_->UnpinPage(pid, false);
+    }
+    return rows;
+}
+
+// ✅ Optimized primary key scan — stops as soon as it finds the row
+Result Executor::PKScan(TableSchema* schema,
+                         const std::string& pk_col,
+                         const std::string& pk_value) {
+    Result rows;
+    int pk_idx = -1;
+    for (size_t i = 0; i < schema->columns.size(); i++)
+        if (schema->columns[i].name == pk_col) { pk_idx = i; break; }
+    if (pk_idx < 0) return rows;
+
+    for (auto pid : schema->page_ids) {
+        Page* page = bpm_->FetchPage(pid);
+        if (!page) continue;
+        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+        for (uint16_t s = 0; s < slot_count; s++) {
+            char buf[PAGE_SIZE];
+            uint16_t len = 0;
+            if (page->GetRecord(s, buf, len)) {
+                Row row = DeserializeRow(*schema, buf, len);
+                if (pk_idx < (int)row.size() && row[pk_idx] == pk_value) {
+                    rows.push_back(row);
+                    bpm_->UnpinPage(pid, false);
+                    return rows; // ✅ Early exit — PK is unique!
+                }
+            }
         }
         bpm_->UnpinPage(pid, false);
     }
@@ -183,7 +233,6 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;
-
         slot_id_t slot = page->InsertRecord(data.c_str(), (uint16_t)data.size());
         if (slot != UINT16_MAX) {
             bpm_->UnpinPage(pid, true);
@@ -199,16 +248,15 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
 
     slot_id_t slot = new_page->InsertRecord(data.c_str(), (uint16_t)data.size());
     bpm_->UnpinPage(new_pid, true);
-
-    if (slot == UINT16_MAX)
-        return {false, "Record too large for page.", {}, {}};
+    if (slot == UINT16_MAX) return {false, "Record too large for page.", {}, {}};
 
     schema->page_ids.push_back(new_pid);
     catalog_->Save();
     return {true, "1 row inserted.", {}, {}};
 }
 
-ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
+ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt,
+                                      const QueryPlan& plan) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
@@ -233,26 +281,27 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
         }
     }
 
-    Result rows;
-    for (auto pid : schema->page_ids) {
-        Page* page = bpm_->FetchPage(pid);
-        if (!page) continue;
+    // ✅ Use optimizer plan
+    Result all_rows;
+    if (plan.type == PlanType::PRIMARY_KEY_SCAN) {
+        all_rows = PKScan(schema, plan.pk_column, plan.pk_value);
+    } else {
+        all_rows = ScanTable(schema);
+        // Apply WHERE filter for full scan
+        Result filtered;
+        for (auto& row : all_rows)
+            if (MatchesConditions(row, *schema, stmt->conditions))
+                filtered.push_back(row);
+        all_rows = filtered;
+    }
 
-        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
-        for (uint16_t s = 0; s < slot_count; s++) {
-            char buf[PAGE_SIZE];
-            uint16_t len = 0;
-            if (page->GetRecord(s, buf, len)) {
-                Row full_row = DeserializeRow(*schema, buf, len);
-                if (MatchesConditions(full_row, *schema, stmt->conditions)) {
-                    Row selected;
-                    for (int idx : col_indices)
-                        selected.push_back(full_row[idx]);
-                    rows.push_back(selected);
-                }
-            }
-        }
-        bpm_->UnpinPage(pid, false);
+    Result rows;
+    for (auto& full_row : all_rows) {
+        Row selected;
+        for (int idx : col_indices)
+            if (idx < (int)full_row.size())
+                selected.push_back(full_row[idx]);
+        rows.push_back(selected);
     }
 
     return {true, std::to_string(rows.size()) + " row(s) returned.", rows, col_names};
@@ -283,7 +332,6 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;
-
         uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
         for (uint16_t s = 0; s < slot_count; s++) {
             char buf[PAGE_SIZE];
@@ -326,7 +374,6 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
     return {true, "1 row returned.", {{result_value}}, {result_label}};
 }
 
-// ✅ NEW — JOIN executor (Nested Loop Join)
 ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
     TableSchema* left_schema  = catalog_->GetTable(stmt->table_name);
     TableSchema* right_schema = catalog_->GetTable(stmt->join_table);
@@ -336,7 +383,6 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
     if (!right_schema)
         return {false, "Table '" + stmt->join_table + "' does not exist.", {}, {}};
 
-    // Find join column indices
     int left_col_idx = -1, right_col_idx = -1;
     for (size_t i = 0; i < left_schema->columns.size(); i++)
         if (left_schema->columns[i].name == stmt->join_left_col)
@@ -346,29 +392,32 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
             { right_col_idx = i; break; }
 
     if (left_col_idx < 0)
-        return {false, "Column '" + stmt->join_left_col + "' not found in " + stmt->table_name, {}, {}};
+        return {false, "Column '" + stmt->join_left_col + "' not found.", {}, {}};
     if (right_col_idx < 0)
-        return {false, "Column '" + stmt->join_right_col + "' not found in " + stmt->join_table, {}, {}};
+        return {false, "Column '" + stmt->join_right_col + "' not found.", {}, {}};
 
-    // Build column names: left_table.col + right_table.col
     std::vector<std::string> col_names;
     for (auto& col : left_schema->columns)
         col_names.push_back(stmt->table_name + "." + col.name);
     for (auto& col : right_schema->columns)
         col_names.push_back(stmt->join_table + "." + col.name);
 
-    // Scan both tables
+    // ✅ Optimizer: put smaller table on outer loop
     Result left_rows  = ScanTable(left_schema);
     Result right_rows = ScanTable(right_schema);
 
-    // Nested Loop Join
+    // If right table is smaller, swap for efficiency
+    if (right_rows.size() < left_rows.size()) {
+        std::swap(left_rows, right_rows);
+        std::swap(left_col_idx, right_col_idx);
+    }
+
     Result result_rows;
     for (auto& left_row : left_rows) {
         for (auto& right_row : right_rows) {
             if (left_col_idx < (int)left_row.size() &&
                 right_col_idx < (int)right_row.size() &&
                 left_row[left_col_idx] == right_row[right_col_idx]) {
-                // Match found — combine rows
                 Row combined = left_row;
                 combined.insert(combined.end(), right_row.begin(), right_row.end());
                 result_rows.push_back(combined);
@@ -380,35 +429,66 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
             result_rows, col_names};
 }
 
-ExecutionResult Executor::ExecDelete(std::shared_ptr<Statement> stmt) {
+ExecutionResult Executor::ExecDelete(std::shared_ptr<Statement> stmt,
+                                      const QueryPlan& plan) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
 
     int deleted = 0;
-    for (auto pid : schema->page_ids) {
-        Page* page = bpm_->FetchPage(pid);
-        if (!page) continue;
 
-        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
-        for (uint16_t s = 0; s < slot_count; s++) {
-            char buf[PAGE_SIZE];
-            uint16_t len = 0;
-            if (page->GetRecord(s, buf, len)) {
-                Row row = DeserializeRow(*schema, buf, len);
-                if (MatchesConditions(row, *schema, stmt->conditions)) {
-                    page->DeleteRecord(s);
-                    deleted++;
+    if (plan.type == PlanType::PRIMARY_KEY_SCAN) {
+        // ✅ Optimized: only scan pages until PK found
+        int pk_idx = -1;
+        for (size_t i = 0; i < schema->columns.size(); i++)
+            if (schema->columns[i].name == plan.pk_column) { pk_idx = i; break; }
+
+        for (auto pid : schema->page_ids) {
+            Page* page = bpm_->FetchPage(pid);
+            if (!page) continue;
+            uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+            bool found = false;
+            for (uint16_t s = 0; s < slot_count; s++) {
+                char buf[PAGE_SIZE];
+                uint16_t len = 0;
+                if (page->GetRecord(s, buf, len)) {
+                    Row row = DeserializeRow(*schema, buf, len);
+                    if (pk_idx < (int)row.size() && row[pk_idx] == plan.pk_value) {
+                        page->DeleteRecord(s);
+                        deleted++;
+                        found = true;
+                        break; // PK is unique — stop
+                    }
                 }
             }
+            bpm_->UnpinPage(pid, true);
+            if (found) break; // Stop scanning pages too
         }
-        bpm_->UnpinPage(pid, true);
+    } else {
+        for (auto pid : schema->page_ids) {
+            Page* page = bpm_->FetchPage(pid);
+            if (!page) continue;
+            uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+            for (uint16_t s = 0; s < slot_count; s++) {
+                char buf[PAGE_SIZE];
+                uint16_t len = 0;
+                if (page->GetRecord(s, buf, len)) {
+                    Row row = DeserializeRow(*schema, buf, len);
+                    if (MatchesConditions(row, *schema, stmt->conditions)) {
+                        page->DeleteRecord(s);
+                        deleted++;
+                    }
+                }
+            }
+            bpm_->UnpinPage(pid, true);
+        }
     }
 
     return {true, std::to_string(deleted) + " row(s) deleted.", {}, {}};
 }
 
-ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt) {
+ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
+                                      const QueryPlan& plan) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
@@ -423,26 +503,58 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt) {
         return {false, "Column '" + stmt->set_column + "' not found.", {}, {}};
 
     int updated = 0;
-    for (auto pid : schema->page_ids) {
-        Page* page = bpm_->FetchPage(pid);
-        if (!page) continue;
 
-        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
-        for (uint16_t s = 0; s < slot_count; s++) {
-            char buf[PAGE_SIZE];
-            uint16_t len = 0;
-            if (page->GetRecord(s, buf, len)) {
-                Row row = DeserializeRow(*schema, buf, len);
-                if (MatchesConditions(row, *schema, stmt->conditions)) {
-                    row[set_col_idx] = stmt->set_value;
-                    page->DeleteRecord(s);
-                    std::string new_data = SerializeRow(*schema, row);
-                    page->InsertRecord(new_data.c_str(), (uint16_t)new_data.size());
-                    updated++;
+    if (plan.type == PlanType::PRIMARY_KEY_SCAN) {
+        // ✅ Optimized update
+        int pk_idx = -1;
+        for (size_t i = 0; i < schema->columns.size(); i++)
+            if (schema->columns[i].name == plan.pk_column) { pk_idx = i; break; }
+
+        for (auto pid : schema->page_ids) {
+            Page* page = bpm_->FetchPage(pid);
+            if (!page) continue;
+            uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+            bool found = false;
+            for (uint16_t s = 0; s < slot_count; s++) {
+                char buf[PAGE_SIZE];
+                uint16_t len = 0;
+                if (page->GetRecord(s, buf, len)) {
+                    Row row = DeserializeRow(*schema, buf, len);
+                    if (pk_idx < (int)row.size() && row[pk_idx] == plan.pk_value) {
+                        row[set_col_idx] = stmt->set_value;
+                        page->DeleteRecord(s);
+                        std::string new_data = SerializeRow(*schema, row);
+                        page->InsertRecord(new_data.c_str(), (uint16_t)new_data.size());
+                        updated++;
+                        found = true;
+                        break;
+                    }
                 }
             }
+            bpm_->UnpinPage(pid, true);
+            if (found) break;
         }
-        bpm_->UnpinPage(pid, true);
+    } else {
+        for (auto pid : schema->page_ids) {
+            Page* page = bpm_->FetchPage(pid);
+            if (!page) continue;
+            uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+            for (uint16_t s = 0; s < slot_count; s++) {
+                char buf[PAGE_SIZE];
+                uint16_t len = 0;
+                if (page->GetRecord(s, buf, len)) {
+                    Row row = DeserializeRow(*schema, buf, len);
+                    if (MatchesConditions(row, *schema, stmt->conditions)) {
+                        row[set_col_idx] = stmt->set_value;
+                        page->DeleteRecord(s);
+                        std::string new_data = SerializeRow(*schema, row);
+                        page->InsertRecord(new_data.c_str(), (uint16_t)new_data.size());
+                        updated++;
+                    }
+                }
+            }
+            bpm_->UnpinPage(pid, true);
+        }
     }
 
     return {true, std::to_string(updated) + " row(s) updated.", {}, {}};
