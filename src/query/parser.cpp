@@ -61,10 +61,9 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
     stmt->type = StatementType::SELECT;
     Expect(TokenType::SELECT);
 
-    // ✅ Check for aggregate function: COUNT(*), SUM(col), AVG(col), MAX(col), MIN(col)
+    // Check for aggregate function
     if (IsAggregateToken(Current().type)) {
         stmt->aggregate_func = Current().value;
-        // uppercase it
         for (auto& c : stmt->aggregate_func) c = toupper(c);
         Consume();
         Expect(TokenType::LPAREN);
@@ -79,13 +78,42 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
         Consume();
         stmt->columns.push_back("*");
     } else {
-        stmt->columns.push_back(Expect(TokenType::IDENTIFIER).value);
-        while (Match(TokenType::COMMA))
-            stmt->columns.push_back(Expect(TokenType::IDENTIFIER).value);
+        // Handle table.column or just column
+        std::string col = Expect(TokenType::IDENTIFIER).value;
+        if (Match(TokenType::DOT))
+            col = Expect(TokenType::IDENTIFIER).value; // use just the column name
+        stmt->columns.push_back(col);
+
+        while (Match(TokenType::COMMA)) {
+            std::string next_col = Expect(TokenType::IDENTIFIER).value;
+            if (Match(TokenType::DOT))
+                next_col = Expect(TokenType::IDENTIFIER).value;
+            stmt->columns.push_back(next_col);
+        }
     }
 
     Expect(TokenType::FROM);
     stmt->table_name = Expect(TokenType::IDENTIFIER).value;
+
+    // ✅ Parse JOIN clause
+    if (Check(TokenType::JOIN) || Check(TokenType::INNER) || 
+        Check(TokenType::LEFT) || Check(TokenType::RIGHT)) {
+        // consume INNER/LEFT/RIGHT if present
+        if (!Check(TokenType::JOIN)) Consume();
+        Expect(TokenType::JOIN);
+
+        stmt->join_table = Expect(TokenType::IDENTIFIER).value;
+        Expect(TokenType::ON);
+
+        // Parse: table1.col = table2.col
+        Expect(TokenType::IDENTIFIER); // left table name
+        Expect(TokenType::DOT);
+        stmt->join_left_col = Expect(TokenType::IDENTIFIER).value;
+        Expect(TokenType::EQ);
+        Expect(TokenType::IDENTIFIER); // right table name
+        Expect(TokenType::DOT);
+        stmt->join_right_col = Expect(TokenType::IDENTIFIER).value;
+    }
 
     if (Check(TokenType::WHERE))
         stmt->conditions = ParseWhere();

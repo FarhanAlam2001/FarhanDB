@@ -22,9 +22,8 @@ ExecutionResult Executor::Execute(std::shared_ptr<Statement> stmt) {
             case StatementType::DROP_TABLE:    return ExecDropTable(stmt);
             case StatementType::INSERT:        return ExecInsert(stmt);
             case StatementType::SELECT:
-                // ✅ Route to aggregate if function present
-                if (!stmt->aggregate_func.empty())
-                    return ExecAggregate(stmt);
+                if (!stmt->aggregate_func.empty()) return ExecAggregate(stmt);
+                if (!stmt->join_table.empty())     return ExecJoin(stmt); // ✅
                 return ExecSelect(stmt);
             case StatementType::DELETE:        return ExecDelete(stmt);
             case StatementType::UPDATE:        return ExecUpdate(stmt);
@@ -59,14 +58,14 @@ ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
         return {false, "Table '" + stmt->table_name + "' already exists.", {}, {}};
 
     TableSchema schema;
-    schema.table_name = stmt->table_name;
-    schema.root_page_id = INVALID_PAGE_ID;
+    schema.table_name    = stmt->table_name;
+    schema.root_page_id  = INVALID_PAGE_ID;
 
     for (auto& cd : stmt->column_defs) {
         Column col;
-        col.name = cd.name;
-        col.type = (cd.type == "INT") ? DataType::INT : DataType::VARCHAR;
-        col.size = cd.size;
+        col.name           = cd.name;
+        col.type           = (cd.type == "INT") ? DataType::INT : DataType::VARCHAR;
+        col.size           = cd.size;
         col.is_primary_key = cd.is_primary_key;
         schema.columns.push_back(col);
     }
@@ -152,6 +151,25 @@ bool Executor::MatchesConditions(const Row& row, const TableSchema& schema,
     return true;
 }
 
+// Helper — scan all rows from a table
+Result Executor::ScanTable(TableSchema* schema) {
+    Result rows;
+    for (auto pid : schema->page_ids) {
+        Page* page = bpm_->FetchPage(pid);
+        if (!page) continue;
+
+        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+        for (uint16_t s = 0; s < slot_count; s++) {
+            char buf[PAGE_SIZE];
+            uint16_t len = 0;
+            if (page->GetRecord(s, buf, len))
+                rows.push_back(DeserializeRow(*schema, buf, len));
+        }
+        bpm_->UnpinPage(pid, false);
+    }
+    return rows;
+}
+
 ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
@@ -187,7 +205,6 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
 
     schema->page_ids.push_back(new_pid);
     catalog_->Save();
-
     return {true, "1 row inserted.", {}, {}};
 }
 
@@ -241,7 +258,6 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
     return {true, std::to_string(rows.size()) + " row(s) returned.", rows, col_names};
 }
 
-// ✅ NEW — Aggregate function executor
 ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
@@ -250,7 +266,6 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
     const std::string& func = stmt->aggregate_func;
     const std::string& col  = stmt->aggregate_col;
 
-    // Find column index for non-COUNT functions
     int col_idx = -1;
     if (col != "*") {
         for (size_t i = 0; i < schema->columns.size(); i++) {
@@ -260,12 +275,11 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
             return {false, "Column '" + col + "' not found.", {}, {}};
     }
 
-    int     count  = 0;
-    double  sum    = 0.0;
-    double  maxval = -DBL_MAX;
-    double  minval =  DBL_MAX;
+    int    count  = 0;
+    double sum    = 0.0;
+    double maxval = -DBL_MAX;
+    double minval =  DBL_MAX;
 
-    // Scan all pages
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;
@@ -277,7 +291,6 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
             if (page->GetRecord(s, buf, len)) {
                 Row row = DeserializeRow(*schema, buf, len);
                 if (!MatchesConditions(row, *schema, stmt->conditions)) continue;
-
                 count++;
                 if (col_idx >= 0 && col_idx < (int)row.size()) {
                     double val = std::stod(row[col_idx]);
@@ -290,10 +303,7 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
         bpm_->UnpinPage(pid, false);
     }
 
-    // Calculate result
-    std::string result_label;
-    std::string result_value;
-
+    std::string result_label, result_value;
     if (func == "COUNT") {
         result_label = "COUNT(*)";
         result_value = std::to_string(count);
@@ -302,9 +312,7 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
         result_value = std::to_string((long long)sum);
     } else if (func == "AVG") {
         result_label = "AVG(" + col + ")";
-        result_value = count > 0
-            ? std::to_string(sum / count).substr(0, 6)
-            : "0";
+        result_value = count > 0 ? std::to_string(sum / count).substr(0, 6) : "0";
     } else if (func == "MAX") {
         result_label = "MAX(" + col + ")";
         result_value = count > 0 ? std::to_string((long long)maxval) : "NULL";
@@ -315,9 +323,61 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
         return {false, "Unknown aggregate function: " + func, {}, {}};
     }
 
-    return {true, "1 row returned.",
-            {{result_value}},
-            {result_label}};
+    return {true, "1 row returned.", {{result_value}}, {result_label}};
+}
+
+// ✅ NEW — JOIN executor (Nested Loop Join)
+ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
+    TableSchema* left_schema  = catalog_->GetTable(stmt->table_name);
+    TableSchema* right_schema = catalog_->GetTable(stmt->join_table);
+
+    if (!left_schema)
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+    if (!right_schema)
+        return {false, "Table '" + stmt->join_table + "' does not exist.", {}, {}};
+
+    // Find join column indices
+    int left_col_idx = -1, right_col_idx = -1;
+    for (size_t i = 0; i < left_schema->columns.size(); i++)
+        if (left_schema->columns[i].name == stmt->join_left_col)
+            { left_col_idx = i; break; }
+    for (size_t i = 0; i < right_schema->columns.size(); i++)
+        if (right_schema->columns[i].name == stmt->join_right_col)
+            { right_col_idx = i; break; }
+
+    if (left_col_idx < 0)
+        return {false, "Column '" + stmt->join_left_col + "' not found in " + stmt->table_name, {}, {}};
+    if (right_col_idx < 0)
+        return {false, "Column '" + stmt->join_right_col + "' not found in " + stmt->join_table, {}, {}};
+
+    // Build column names: left_table.col + right_table.col
+    std::vector<std::string> col_names;
+    for (auto& col : left_schema->columns)
+        col_names.push_back(stmt->table_name + "." + col.name);
+    for (auto& col : right_schema->columns)
+        col_names.push_back(stmt->join_table + "." + col.name);
+
+    // Scan both tables
+    Result left_rows  = ScanTable(left_schema);
+    Result right_rows = ScanTable(right_schema);
+
+    // Nested Loop Join
+    Result result_rows;
+    for (auto& left_row : left_rows) {
+        for (auto& right_row : right_rows) {
+            if (left_col_idx < (int)left_row.size() &&
+                right_col_idx < (int)right_row.size() &&
+                left_row[left_col_idx] == right_row[right_col_idx]) {
+                // Match found — combine rows
+                Row combined = left_row;
+                combined.insert(combined.end(), right_row.begin(), right_row.end());
+                result_rows.push_back(combined);
+            }
+        }
+    }
+
+    return {true, std::to_string(result_rows.size()) + " row(s) returned.",
+            result_rows, col_names};
 }
 
 ExecutionResult Executor::ExecDelete(std::shared_ptr<Statement> stmt) {

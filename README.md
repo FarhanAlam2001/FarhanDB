@@ -174,8 +174,8 @@ FarhanDB/
 - [x] ACID transactions
 - [x] Beginner mode interface
 - [x] Multi-page table scanning
-- [ ] JOIN support
-- [ ] Aggregate functions (COUNT, SUM, AVG)
+- [x] JOIN support
+- [x] Aggregate functions (COUNT, SUM, AVG)
 - [ ] Query optimizer
 - [ ] Network/TCP interface
 

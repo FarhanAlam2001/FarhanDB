@@ -35,9 +35,14 @@ struct Statement {
     std::string                 set_column;
     std::string                 set_value;
 
-    // ✅ Aggregate support
-    std::string                 aggregate_func;  // COUNT, SUM, AVG, MAX, MIN
-    std::string                 aggregate_col;   // column name or *
+    // Aggregate support
+    std::string                 aggregate_func;
+    std::string                 aggregate_col;
+
+    // ✅ JOIN support
+    std::string                 join_table;     // second table name
+    std::string                 join_left_col;  // left table column
+    std::string                 join_right_col; // right table column
 };
 
 class Parser {

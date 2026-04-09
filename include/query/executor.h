@@ -41,7 +41,8 @@ private:
     ExecutionResult ExecSelect(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecDelete(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecUpdate(std::shared_ptr<Statement> stmt);
-    ExecutionResult ExecAggregate(std::shared_ptr<Statement> stmt); // ✅ NEW
+    ExecutionResult ExecAggregate(std::shared_ptr<Statement> stmt);
+    ExecutionResult ExecJoin(std::shared_ptr<Statement> stmt); // ✅ NEW
 
     std::string     SerializeRow(const TableSchema& schema,
                                  const std::vector<std::string>& values);
@@ -50,6 +51,9 @@ private:
     bool            MatchesConditions(const Row& row,
                                       const TableSchema& schema,
                                       const std::vector<Condition>& conditions);
+
+    // Helper to scan all rows from a table
+    Result          ScanTable(TableSchema* schema);
 };
 
 } // namespace FarhanDB
