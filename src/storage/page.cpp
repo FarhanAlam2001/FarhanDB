@@ -6,7 +6,7 @@ namespace FarhanDB {
 
 Page::Page() {
     std::memset(data_, 0, PAGE_SIZE);
-    Header()->page_id          = INVALID_PAGE_ID;
+    Header()->page_id           = INVALID_PAGE_ID;
     Header()->free_space_offset = sizeof(PageHeader);
     Header()->slot_count        = 0;
     Header()->free_space        = PAGE_SIZE - sizeof(PageHeader);
@@ -26,11 +26,7 @@ uint16_t  Page::GetFreeSpace() const { return Header()->free_space; }
 slot_id_t Page::InsertRecord(const char* data, uint16_t length) {
     if (Header()->free_space < length + sizeof(Slot)) return UINT16_MAX;
 
-    // Write record from the end of free space backwards
-    uint16_t record_offset = PAGE_SIZE - (Header()->slot_count + 1) * sizeof(Slot)
-                             - length;
-
-    // Actually place at free_space_offset
+    // Place record at free_space_offset
     uint16_t offset = Header()->free_space_offset;
     std::memcpy(data_ + offset, data, length);
 
@@ -49,7 +45,7 @@ slot_id_t Page::InsertRecord(const char* data, uint16_t length) {
 
 bool Page::GetRecord(slot_id_t slot, char* out_data, uint16_t& out_length) const {
     if (slot >= Header()->slot_count) return false;
-    if (Slots()[slot].length == 0) return false; // deleted
+    if (Slots()[slot].length == 0) return false;
 
     out_length = Slots()[slot].length;
     std::memcpy(out_data, data_ + Slots()[slot].offset, out_length);
@@ -58,7 +54,7 @@ bool Page::GetRecord(slot_id_t slot, char* out_data, uint16_t& out_length) const
 
 bool Page::DeleteRecord(slot_id_t slot) {
     if (slot >= Header()->slot_count) return false;
-    Slots()[slot].length = 0; // mark as deleted
+    Slots()[slot].length = 0;
     Header()->is_dirty = 1;
     return true;
 }

@@ -52,31 +52,31 @@ ExecutionResult Executor::Execute(std::shared_ptr<Statement> stmt) {
                 auto* txn = txn_mgr_->Begin();
                 current_txn_id_ = txn->id;
                 return {true, "Transaction started (id=" +
-                        std::to_string(txn->id) + ")", {}, {}};
+                        std::to_string(txn->id) + ")", {}, {}, ""};
             }
             case StatementType::COMMIT_TXN: {
                 txn_mgr_->Commit(current_txn_id_);
                 lock_mgr_->ReleaseAllLocks(current_txn_id_);
                 current_txn_id_ = INVALID_TXN_ID;
-                return {true, "Transaction committed.", {}, {}};
+                return {true, "Transaction committed.", {}, {}, ""};
             }
             case StatementType::ROLLBACK_TXN: {
                 txn_mgr_->Abort(current_txn_id_);
                 lock_mgr_->ReleaseAllLocks(current_txn_id_);
                 current_txn_id_ = INVALID_TXN_ID;
-                return {true, "Transaction rolled back.", {}, {}};
+                return {true, "Transaction rolled back.", {}, {}, ""};
             }
             default:
-                return {false, "Unknown statement type.", {}, {}};
+                return {false, "Unknown statement type.", {}, {}, ""};
         }
     } catch (const std::exception& e) {
-        return {false, std::string("Error: ") + e.what(), {}, {}};
+        return {false, std::string("Error: ") + e.what(), {}, {}, ""};
     }
 }
 
 ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
     if (catalog_->TableExists(stmt->table_name))
-        return {false, "Table '" + stmt->table_name + "' already exists.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' already exists.", {}, {}, ""};
 
     TableSchema schema;
     schema.table_name   = stmt->table_name;
@@ -93,20 +93,20 @@ ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
 
     page_id_t pid;
     Page* p = bpm_->NewPage(pid);
-    if (!p) return {false, "Could not allocate page for table.", {}, {}};
+    if (!p) return {false, "Could not allocate page for table.", {}, {}, ""};
     schema.root_page_id = pid;
     schema.page_ids.push_back(pid);
     bpm_->UnpinPage(pid, true);
 
     catalog_->CreateTable(schema);
-    return {true, "Table '" + stmt->table_name + "' created.", {}, {}};
+    return {true, "Table '" + stmt->table_name + "' created.", {}, {}, ""};
 }
 
 ExecutionResult Executor::ExecDropTable(std::shared_ptr<Statement> stmt) {
     if (!catalog_->TableExists(stmt->table_name))
-        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
     catalog_->DropTable(stmt->table_name);
-    return {true, "Table '" + stmt->table_name + "' dropped.", {}, {}};
+    return {true, "Table '" + stmt->table_name + "' dropped.", {}, {}, ""};
 }
 
 std::string Executor::SerializeRow(const TableSchema& schema,
@@ -223,10 +223,10 @@ Result Executor::PKScan(TableSchema* schema,
 ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
-        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
 
     if (stmt->values.size() != schema->columns.size())
-        return {false, "Column count mismatch.", {}, {}};
+        return {false, "Column count mismatch.", {}, {}, ""};
 
     std::string data = SerializeRow(*schema, stmt->values);
 
@@ -237,29 +237,29 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
         if (slot != UINT16_MAX) {
             bpm_->UnpinPage(pid, true);
             catalog_->Save();
-            return {true, "1 row inserted.", {}, {}};
+            return {true, "1 row inserted.", {}, {}, ""};
         }
         bpm_->UnpinPage(pid, false);
     }
 
     page_id_t new_pid;
     Page* new_page = bpm_->NewPage(new_pid);
-    if (!new_page) return {false, "Out of space.", {}, {}};
+    if (!new_page) return {false, "Out of space.", {}, {}, ""};
 
     slot_id_t slot = new_page->InsertRecord(data.c_str(), (uint16_t)data.size());
     bpm_->UnpinPage(new_pid, true);
-    if (slot == UINT16_MAX) return {false, "Record too large for page.", {}, {}};
+    if (slot == UINT16_MAX) return {false, "Record too large for page.", {}, {}, ""};
 
     schema->page_ids.push_back(new_pid);
     catalog_->Save();
-    return {true, "1 row inserted.", {}, {}};
+    return {true, "1 row inserted.", {}, {}, ""};
 }
 
 ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt,
                                       const QueryPlan& plan) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
-        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
 
     std::vector<std::string> col_names;
     std::vector<int> col_indices;
@@ -304,13 +304,13 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt,
         rows.push_back(selected);
     }
 
-    return {true, std::to_string(rows.size()) + " row(s) returned.", rows, col_names};
+    return {true, std::to_string(rows.size()) + " row(s) returned.", rows, col_names, ""};
 }
 
 ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
-        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
 
     const std::string& func = stmt->aggregate_func;
     const std::string& col  = stmt->aggregate_col;
@@ -321,7 +321,7 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
             if (schema->columns[i].name == col) { col_idx = i; break; }
         }
         if (col_idx < 0)
-            return {false, "Column '" + col + "' not found.", {}, {}};
+            return {false, "Column '" + col + "' not found.", {}, {}, ""};
     }
 
     int    count  = 0;
@@ -368,10 +368,10 @@ ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
         result_label = "MIN(" + col + ")";
         result_value = count > 0 ? std::to_string((long long)minval) : "NULL";
     } else {
-        return {false, "Unknown aggregate function: " + func, {}, {}};
+        return {false, "Unknown aggregate function: " + func, {}, {}, ""};
     }
 
-    return {true, "1 row returned.", {{result_value}}, {result_label}};
+    return {true, "1 row returned.", {{result_value}}, {result_label}, ""};
 }
 
 ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
@@ -379,9 +379,9 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
     TableSchema* right_schema = catalog_->GetTable(stmt->join_table);
 
     if (!left_schema)
-        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
     if (!right_schema)
-        return {false, "Table '" + stmt->join_table + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->join_table + "' does not exist.", {}, {}, ""};
 
     int left_col_idx = -1, right_col_idx = -1;
     for (size_t i = 0; i < left_schema->columns.size(); i++)
@@ -392,9 +392,9 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
             { right_col_idx = i; break; }
 
     if (left_col_idx < 0)
-        return {false, "Column '" + stmt->join_left_col + "' not found.", {}, {}};
+        return {false, "Column '" + stmt->join_left_col + "' not found.", {}, {}, ""};
     if (right_col_idx < 0)
-        return {false, "Column '" + stmt->join_right_col + "' not found.", {}, {}};
+        return {false, "Column '" + stmt->join_right_col + "' not found.", {}, {}, ""};
 
     std::vector<std::string> col_names;
     for (auto& col : left_schema->columns)
@@ -426,14 +426,14 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
     }
 
     return {true, std::to_string(result_rows.size()) + " row(s) returned.",
-            result_rows, col_names};
+            result_rows, col_names, ""};
 }
 
 ExecutionResult Executor::ExecDelete(std::shared_ptr<Statement> stmt,
                                       const QueryPlan& plan) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
-        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
 
     int deleted = 0;
 
@@ -484,14 +484,14 @@ ExecutionResult Executor::ExecDelete(std::shared_ptr<Statement> stmt,
         }
     }
 
-    return {true, std::to_string(deleted) + " row(s) deleted.", {}, {}};
+    return {true, std::to_string(deleted) + " row(s) deleted.", {}, {}, ""};
 }
 
 ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
                                       const QueryPlan& plan) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
-        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
 
     int set_col_idx = -1;
     for (size_t i = 0; i < schema->columns.size(); i++) {
@@ -500,7 +500,7 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
         }
     }
     if (set_col_idx < 0)
-        return {false, "Column '" + stmt->set_column + "' not found.", {}, {}};
+        return {false, "Column '" + stmt->set_column + "' not found.", {}, {}, ""};
 
     int updated = 0;
 
@@ -557,7 +557,7 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
         }
     }
 
-    return {true, std::to_string(updated) + " row(s) updated.", {}, {}};
+    return {true, std::to_string(updated) + " row(s) updated.", {}, {}, ""};
 }
 
 } // namespace FarhanDB
