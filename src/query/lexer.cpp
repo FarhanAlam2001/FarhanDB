@@ -28,10 +28,10 @@ bool Lexer::HasMore() const {
 }
 
 Token Lexer::ReadString() {
-    Advance(); // skip opening quote
+    Advance();
     std::string val;
     while (HasMore() && Peek() != '\'') val += Advance();
-    Advance(); // skip closing quote
+    Advance();
     return {TokenType::STRING_LITERAL, val, line_};
 }
 
@@ -69,6 +69,12 @@ TokenType Lexer::KeywordType(const std::string& word) const {
     if (upper == "BEGIN")    return TokenType::BEGIN;
     if (upper == "COMMIT")   return TokenType::COMMIT;
     if (upper == "ROLLBACK") return TokenType::ROLLBACK;
+    // ✅ Aggregate functions
+    if (upper == "COUNT")    return TokenType::COUNT;
+    if (upper == "SUM")      return TokenType::SUM;
+    if (upper == "AVG")      return TokenType::AVG;
+    if (upper == "MAX")      return TokenType::MAX;
+    if (upper == "MIN")      return TokenType::MIN;
     return TokenType::IDENTIFIER;
 }
 
@@ -90,7 +96,7 @@ Token Lexer::NextToken() {
 
     Advance();
     switch (c) {
-        case '=':  return {TokenType::EQ,        "=",  line_};
+        case '=':  return {TokenType::EQ,       "=",  line_};
         case '<':
             if (Peek() == '=') { Advance(); return {TokenType::LTE, "<=", line_}; }
             return {TokenType::LT, "<", line_};
@@ -100,14 +106,14 @@ Token Lexer::NextToken() {
         case '!':
             if (Peek() == '=') { Advance(); return {TokenType::NEQ, "!=", line_}; }
             break;
-        case ',':  return {TokenType::COMMA,     ",",  line_};
-        case ';':  return {TokenType::SEMICOLON,  ";",  line_};
-        case '(':  return {TokenType::LPAREN,    "(",  line_};
-        case ')':  return {TokenType::RPAREN,    ")",  line_};
-        case '*':  return {TokenType::STAR,      "*",  line_};
-        case '+':  return {TokenType::PLUS,      "+",  line_};
-        case '-':  return {TokenType::MINUS,     "-",  line_};
-        case '/':  return {TokenType::SLASH,     "/",  line_};
+        case ',':  return {TokenType::COMMA,    ",",  line_};
+        case ';':  return {TokenType::SEMICOLON, ";",  line_};
+        case '(':  return {TokenType::LPAREN,   "(",  line_};
+        case ')':  return {TokenType::RPAREN,   ")",  line_};
+        case '*':  return {TokenType::STAR,     "*",  line_};
+        case '+':  return {TokenType::PLUS,     "+",  line_};
+        case '-':  return {TokenType::MINUS,    "-",  line_};
+        case '/':  return {TokenType::SLASH,    "/",  line_};
     }
     return {TokenType::UNKNOWN, std::string(1, c), line_};
 }

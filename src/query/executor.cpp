@@ -4,6 +4,8 @@
 #include <cstring>
 #include <algorithm>
 #include <iomanip>
+#include <climits>
+#include <cfloat>
 
 namespace FarhanDB {
 
@@ -19,7 +21,11 @@ ExecutionResult Executor::Execute(std::shared_ptr<Statement> stmt) {
             case StatementType::CREATE_TABLE:  return ExecCreateTable(stmt);
             case StatementType::DROP_TABLE:    return ExecDropTable(stmt);
             case StatementType::INSERT:        return ExecInsert(stmt);
-            case StatementType::SELECT:        return ExecSelect(stmt);
+            case StatementType::SELECT:
+                // ✅ Route to aggregate if function present
+                if (!stmt->aggregate_func.empty())
+                    return ExecAggregate(stmt);
+                return ExecSelect(stmt);
             case StatementType::DELETE:        return ExecDelete(stmt);
             case StatementType::UPDATE:        return ExecUpdate(stmt);
             case StatementType::BEGIN_TXN: {
@@ -65,12 +71,11 @@ ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
         schema.columns.push_back(col);
     }
 
-    // Allocate first data page
     page_id_t pid;
     Page* p = bpm_->NewPage(pid);
     if (!p) return {false, "Could not allocate page for table.", {}, {}};
     schema.root_page_id = pid;
-    schema.page_ids.push_back(pid);  // track first page
+    schema.page_ids.push_back(pid);
     bpm_->UnpinPage(pid, true);
 
     catalog_->CreateTable(schema);
@@ -157,7 +162,6 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
 
     std::string data = SerializeRow(*schema, stmt->values);
 
-    // Try inserting into existing pages
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;
@@ -171,7 +175,6 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
         bpm_->UnpinPage(pid, false);
     }
 
-    // All pages full — allocate a new page
     page_id_t new_pid;
     Page* new_page = bpm_->NewPage(new_pid);
     if (!new_page) return {false, "Out of space.", {}, {}};
@@ -182,7 +185,6 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
     if (slot == UINT16_MAX)
         return {false, "Record too large for page.", {}, {}};
 
-    // Track new page in catalog
     schema->page_ids.push_back(new_pid);
     catalog_->Save();
 
@@ -215,8 +217,6 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
     }
 
     Result rows;
-
-    // ✅ Scan ALL pages — multi-page support
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;
@@ -241,14 +241,91 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt) {
     return {true, std::to_string(rows.size()) + " row(s) returned.", rows, col_names};
 }
 
+// ✅ NEW — Aggregate function executor
+ExecutionResult Executor::ExecAggregate(std::shared_ptr<Statement> stmt) {
+    TableSchema* schema = catalog_->GetTable(stmt->table_name);
+    if (!schema)
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
+
+    const std::string& func = stmt->aggregate_func;
+    const std::string& col  = stmt->aggregate_col;
+
+    // Find column index for non-COUNT functions
+    int col_idx = -1;
+    if (col != "*") {
+        for (size_t i = 0; i < schema->columns.size(); i++) {
+            if (schema->columns[i].name == col) { col_idx = i; break; }
+        }
+        if (col_idx < 0)
+            return {false, "Column '" + col + "' not found.", {}, {}};
+    }
+
+    int     count  = 0;
+    double  sum    = 0.0;
+    double  maxval = -DBL_MAX;
+    double  minval =  DBL_MAX;
+
+    // Scan all pages
+    for (auto pid : schema->page_ids) {
+        Page* page = bpm_->FetchPage(pid);
+        if (!page) continue;
+
+        uint16_t slot_count = *reinterpret_cast<uint16_t*>(page->GetData() + 6);
+        for (uint16_t s = 0; s < slot_count; s++) {
+            char buf[PAGE_SIZE];
+            uint16_t len = 0;
+            if (page->GetRecord(s, buf, len)) {
+                Row row = DeserializeRow(*schema, buf, len);
+                if (!MatchesConditions(row, *schema, stmt->conditions)) continue;
+
+                count++;
+                if (col_idx >= 0 && col_idx < (int)row.size()) {
+                    double val = std::stod(row[col_idx]);
+                    sum    += val;
+                    maxval  = std::max(maxval, val);
+                    minval  = std::min(minval, val);
+                }
+            }
+        }
+        bpm_->UnpinPage(pid, false);
+    }
+
+    // Calculate result
+    std::string result_label;
+    std::string result_value;
+
+    if (func == "COUNT") {
+        result_label = "COUNT(*)";
+        result_value = std::to_string(count);
+    } else if (func == "SUM") {
+        result_label = "SUM(" + col + ")";
+        result_value = std::to_string((long long)sum);
+    } else if (func == "AVG") {
+        result_label = "AVG(" + col + ")";
+        result_value = count > 0
+            ? std::to_string(sum / count).substr(0, 6)
+            : "0";
+    } else if (func == "MAX") {
+        result_label = "MAX(" + col + ")";
+        result_value = count > 0 ? std::to_string((long long)maxval) : "NULL";
+    } else if (func == "MIN") {
+        result_label = "MIN(" + col + ")";
+        result_value = count > 0 ? std::to_string((long long)minval) : "NULL";
+    } else {
+        return {false, "Unknown aggregate function: " + func, {}, {}};
+    }
+
+    return {true, "1 row returned.",
+            {{result_value}},
+            {result_label}};
+}
+
 ExecutionResult Executor::ExecDelete(std::shared_ptr<Statement> stmt) {
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}};
 
     int deleted = 0;
-
-    // ✅ Delete across ALL pages
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;
@@ -286,8 +363,6 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt) {
         return {false, "Column '" + stmt->set_column + "' not found.", {}, {}};
 
     int updated = 0;
-
-    // ✅ Update across ALL pages
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
         if (!page) continue;

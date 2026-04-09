@@ -11,6 +11,9 @@ enum class TokenType {
     INT, VARCHAR, PRIMARY, KEY, INDEX, ON,
     BEGIN, COMMIT, ROLLBACK,
 
+    // ✅ Aggregate functions
+    COUNT, SUM, AVG, MAX, MIN,
+
     // Literals
     INTEGER_LITERAL,
     STRING_LITERAL,

@@ -9,9 +9,7 @@
 
 namespace FarhanDB {
 
-// A single row of results
 using Row    = std::vector<std::string>;
-// A result set
 using Result = std::vector<Row>;
 
 struct ExecutionResult {
@@ -43,14 +41,12 @@ private:
     ExecutionResult ExecSelect(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecDelete(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecUpdate(std::shared_ptr<Statement> stmt);
+    ExecutionResult ExecAggregate(std::shared_ptr<Statement> stmt); // ✅ NEW
 
-    // Serialize a row into bytes for storage
     std::string     SerializeRow(const TableSchema& schema,
                                  const std::vector<std::string>& values);
-    // Deserialize bytes back into a row
     Row             DeserializeRow(const TableSchema& schema,
                                    const char* data, uint16_t length);
-    // Check if a row matches WHERE conditions
     bool            MatchesConditions(const Row& row,
                                       const TableSchema& schema,
                                       const std::vector<Condition>& conditions);

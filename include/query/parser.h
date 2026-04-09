@@ -3,11 +3,9 @@
 #include <memory>
 #include <vector>
 #include <string>
-#include <variant>
 
 namespace FarhanDB {
 
-// AST Node types
 enum class StatementType {
     SELECT, INSERT, UPDATE, DELETE,
     CREATE_TABLE, DROP_TABLE,
@@ -16,26 +14,30 @@ enum class StatementType {
 
 struct ColumnDef {
     std::string name;
-    std::string type;   // "INT" or "VARCHAR"
-    int         size;   // for VARCHAR
+    std::string type;
+    int         size;
     bool        is_primary_key;
 };
 
 struct Condition {
     std::string column;
-    std::string op;       // =, !=, <, >, <=, >=
+    std::string op;
     std::string value;
 };
 
 struct Statement {
     StatementType               type;
     std::string                 table_name;
-    std::vector<std::string>    columns;       // SELECT columns
-    std::vector<std::string>    values;        // INSERT values
-    std::vector<ColumnDef>      column_defs;   // CREATE TABLE
-    std::vector<Condition>      conditions;    // WHERE clause
-    std::string                 set_column;    // UPDATE SET
+    std::vector<std::string>    columns;
+    std::vector<std::string>    values;
+    std::vector<ColumnDef>      column_defs;
+    std::vector<Condition>      conditions;
+    std::string                 set_column;
     std::string                 set_value;
+
+    // ✅ Aggregate support
+    std::string                 aggregate_func;  // COUNT, SUM, AVG, MAX, MIN
+    std::string                 aggregate_col;   // column name or *
 };
 
 class Parser {
@@ -62,6 +64,8 @@ private:
     std::shared_ptr<Statement>  ParseCreateTable();
     std::shared_ptr<Statement>  ParseDropTable();
     std::vector<Condition>      ParseWhere();
+
+    bool IsAggregateToken(TokenType t) const;
 };
 
 } // namespace FarhanDB

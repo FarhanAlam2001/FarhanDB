@@ -22,6 +22,12 @@ bool Parser::Match(TokenType type) {
     return false;
 }
 
+bool Parser::IsAggregateToken(TokenType t) const {
+    return t == TokenType::COUNT || t == TokenType::SUM ||
+           t == TokenType::AVG   || t == TokenType::MAX ||
+           t == TokenType::MIN;
+}
+
 std::shared_ptr<Statement> Parser::Parse() {
     if (Check(TokenType::SELECT))   return ParseSelect();
     if (Check(TokenType::INSERT))   return ParseInsert();
@@ -55,7 +61,21 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
     stmt->type = StatementType::SELECT;
     Expect(TokenType::SELECT);
 
-    if (Check(TokenType::STAR)) {
+    // ✅ Check for aggregate function: COUNT(*), SUM(col), AVG(col), MAX(col), MIN(col)
+    if (IsAggregateToken(Current().type)) {
+        stmt->aggregate_func = Current().value;
+        // uppercase it
+        for (auto& c : stmt->aggregate_func) c = toupper(c);
+        Consume();
+        Expect(TokenType::LPAREN);
+        if (Check(TokenType::STAR)) {
+            stmt->aggregate_col = "*";
+            Consume();
+        } else {
+            stmt->aggregate_col = Expect(TokenType::IDENTIFIER).value;
+        }
+        Expect(TokenType::RPAREN);
+    } else if (Check(TokenType::STAR)) {
         Consume();
         stmt->columns.push_back("*");
     } else {
