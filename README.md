@@ -1,8 +1,22 @@
 # FarhanDB 🗄️
 
-A fully functional relational database engine built from scratch in **C++17**, featuring a custom SQL parser, buffer pool manager, B+ Tree index, Write-Ahead Log (WAL), and ACID transaction support.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Language: C++17](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![Platform: Windows](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Mac-lightgrey.svg)]()
 
-> Built without any external database libraries — every component is implemented from the ground up.
+## About
+
+FarhanDB is a **relational database engine built entirely from scratch in C++17** — no external database libraries used. Every single component including the storage engine, SQL parser, transaction manager, buffer pool, query optimizer, and lock manager is hand-written from the ground up.
+
+This project was built to deeply understand how real-world databases like MySQL and PostgreSQL work internally at the systems level — from raw disk I/O and page management all the way up to SQL parsing and query execution.
+
+> Think of it as a mini database engine that you can actually read, understand and learn from.
+
+**Who is this for?**
+- Developers who want to understand database internals
+- C++ systems programming enthusiasts
+- Students studying database implementation
+- Anyone curious about how SQL databases work under the hood
 
 ---
 
@@ -15,6 +29,9 @@ A fully functional relational database engine built from scratch in **C++17**, f
 - **SQL Parser** — Hand-written lexer and parser supporting core SQL
 - **Transaction Manager** — ACID transactions with BEGIN/COMMIT/ROLLBACK
 - **Lock Manager** — Row-level and table-level locking (Shared/Exclusive)
+- **Aggregate Functions** — COUNT, SUM, AVG, MAX, MIN
+- **JOIN Support** — Inner join across multiple tables
+- **Query Optimizer** — Primary key scan, predicate pushdown, join reordering
 - **Beginner Mode** — Step-by-step menu interface for non-SQL users
 - **SQL Mode** — Direct SQL query interface
 
@@ -27,7 +44,7 @@ A fully functional relational database engine built from scratch in **C++17**, f
 CREATE TABLE students (id INT PRIMARY KEY, name VARCHAR(50), age INT);
 
 -- Insert records
-INSERT INTO students VALUES (1, 'John', 21);
+INSERT INTO students VALUES (1, 'Farhan', 21);
 
 -- Query records
 SELECT * FROM students;
@@ -42,9 +59,19 @@ DELETE FROM students WHERE id = 1;
 -- Drop a table
 DROP TABLE students;
 
+-- Aggregate functions
+SELECT COUNT(*) FROM students;
+SELECT SUM(age) FROM students;
+SELECT AVG(age) FROM students;
+SELECT MAX(age) FROM students;
+SELECT MIN(age) FROM students;
+
+-- JOIN two tables
+SELECT * FROM students JOIN grades ON students.id = grades.student_id;
+
 -- Transactions
 BEGIN;
-INSERT INTO students VALUES (2, 'Hamilton', 19);
+INSERT INTO students VALUES (2, 'Ahmed', 19);
 COMMIT;
 ROLLBACK;
 ```
@@ -59,7 +86,8 @@ ROLLBACK;
 │    (Beginner Mode / SQL Mode)       │
 ├─────────────────────────────────────┤
 │           Query Layer               │
-│   Lexer → Parser → Executor         │
+│  Lexer → Parser → Optimizer →       │
+│          Executor                   │
 ├─────────────────────────────────────┤
 │         Transaction Layer           │
 │  Transaction Manager + Lock Manager │
@@ -80,23 +108,28 @@ ROLLBACK;
 - C++17 compiler (GCC 10+ or Clang 10+)
 - CMake 3.20+
 
-### Build Steps
+### Build Steps (Windows)
+
+```cmd
+git clone https://github.com/FarhanAlam2001/FarhanDB.git
+cd FarhanDB
+mkdir build
+cd build
+cmake .. -G "MinGW Makefiles"
+cmake --build .
+farhandb.exe
+```
+
+### Build Steps (Linux/Mac)
 
 ```bash
 git clone https://github.com/FarhanAlam2001/FarhanDB.git
 cd FarhanDB
 mkdir build
 cd build
-cmake .. -G "MinGW Makefiles"   # Windows
-cmake ..                         # Linux/Mac
+cmake ..
 cmake --build .
-```
-
-### Run
-
-```bash
-./farhandb       # Linux/Mac
-farhandb.exe     # Windows
+./farhandb
 ```
 
 ---
@@ -143,22 +176,23 @@ FarhanDB stores all data in 3 files created automatically in the same directory 
 FarhanDB/
 ├── src/
 │   ├── storage/
-│   │   ├── page.cpp           # Slotted page layout
-│   │   ├── disk_manager.cpp   # Raw disk I/O
-│   │   ├── buffer_pool.cpp    # LRU buffer pool
-│   │   └── wal.cpp            # Write-ahead log
+│   │   ├── page.cpp                # Slotted page layout
+│   │   ├── disk_manager.cpp        # Raw disk I/O
+│   │   ├── buffer_pool.cpp         # LRU buffer pool
+│   │   └── wal.cpp                 # Write-ahead log
 │   ├── index/
-│   │   └── btree.cpp          # B+ Tree index
+│   │   └── btree.cpp               # B+ Tree index
 │   ├── query/
-│   │   ├── lexer.cpp          # SQL tokenizer
-│   │   ├── parser.cpp         # SQL parser
-│   │   ├── catalog.cpp        # Table catalog
-│   │   └── executor.cpp       # Query executor
+│   │   ├── lexer.cpp               # SQL tokenizer
+│   │   ├── parser.cpp              # SQL parser
+│   │   ├── catalog.cpp             # Table catalog
+│   │   ├── optimizer.cpp           # Query optimizer
+│   │   └── executor.cpp            # Query executor
 │   ├── transaction/
-│   │   ├── lock_manager.cpp   # Locking
-│   │   └── transaction_manager.cpp
-│   └── main.cpp               # Entry point + UI
-├── include/                   # Header files
+│   │   ├── lock_manager.cpp        # Locking
+│   │   └── transaction_manager.cpp # Transaction management
+│   └── main.cpp                    # Entry point + UI
+├── include/                        # Header files
 ├── CMakeLists.txt
 └── README.md
 ```
@@ -175,7 +209,7 @@ FarhanDB/
 - [x] Beginner mode interface
 - [x] Multi-page table scanning
 - [x] JOIN support
-- [x] Aggregate functions (COUNT, SUM, AVG)
+- [x] Aggregate functions (COUNT, SUM, AVG, MAX, MIN)
 - [x] Query optimizer
 - [ ] Network/TCP interface
 
@@ -189,4 +223,4 @@ MIT License — free to use, modify and distribute.
 
 ## Author
 
-Built by **Farhan** — a systems programming project demonstrating low-level database internals in C++.
+Built by **Md Farhan Alam** ([@FarhanAlam2001](https://github.com/FarhanAlam2001)) — a systems programming project demonstrating low-level database internals in C++.
