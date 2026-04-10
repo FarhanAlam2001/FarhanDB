@@ -35,7 +35,7 @@ std::shared_ptr<Statement> Parser::Parse() {
     if (Check(TokenType::DELETE))   return ParseDelete();
     if (Check(TokenType::CREATE))   return ParseCreateTable();
     if (Check(TokenType::DROP))     return ParseDropTable();
-    if (Check(TokenType::BEGIN))  {
+    if (Check(TokenType::BEGIN)) {
         Consume();
         auto s = std::make_shared<Statement>();
         s->type = StatementType::BEGIN_TXN;
@@ -61,7 +61,11 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
     stmt->type = StatementType::SELECT;
     Expect(TokenType::SELECT);
 
-    // Check for aggregate function
+    // DISTINCT
+    if (Match(TokenType::DISTINCT))
+        stmt->is_distinct = true;
+
+    // Aggregate function
     if (IsAggregateToken(Current().type)) {
         stmt->aggregate_func = Current().value;
         for (auto& c : stmt->aggregate_func) c = toupper(c);
@@ -78,10 +82,9 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
         Consume();
         stmt->columns.push_back("*");
     } else {
-        // Handle table.column or just column
         std::string col = Expect(TokenType::IDENTIFIER).value;
         if (Match(TokenType::DOT))
-            col = Expect(TokenType::IDENTIFIER).value; // use just the column name
+            col = Expect(TokenType::IDENTIFIER).value;
         stmt->columns.push_back(col);
 
         while (Match(TokenType::COMMA)) {
@@ -95,28 +98,42 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
     Expect(TokenType::FROM);
     stmt->table_name = Expect(TokenType::IDENTIFIER).value;
 
-    // ✅ Parse JOIN clause
-    if (Check(TokenType::JOIN) || Check(TokenType::INNER) || 
+    // JOIN clause
+    if (Check(TokenType::JOIN) || Check(TokenType::INNER) ||
         Check(TokenType::LEFT) || Check(TokenType::RIGHT)) {
-        // consume INNER/LEFT/RIGHT if present
         if (!Check(TokenType::JOIN)) Consume();
         Expect(TokenType::JOIN);
-
         stmt->join_table = Expect(TokenType::IDENTIFIER).value;
         Expect(TokenType::ON);
-
-        // Parse: table1.col = table2.col
-        Expect(TokenType::IDENTIFIER); // left table name
+        Expect(TokenType::IDENTIFIER);
         Expect(TokenType::DOT);
         stmt->join_left_col = Expect(TokenType::IDENTIFIER).value;
         Expect(TokenType::EQ);
-        Expect(TokenType::IDENTIFIER); // right table name
+        Expect(TokenType::IDENTIFIER);
         Expect(TokenType::DOT);
         stmt->join_right_col = Expect(TokenType::IDENTIFIER).value;
     }
 
+    // WHERE clause
     if (Check(TokenType::WHERE))
         stmt->conditions = ParseWhere();
+
+    // ORDER BY clause
+    if (Check(TokenType::ORDER)) {
+        Consume(); // consume ORDER
+        Expect(TokenType::BY);
+        stmt->order_by_col = Expect(TokenType::IDENTIFIER).value;
+        if (Match(TokenType::DESC))
+            stmt->order_by_desc = true;
+        else
+            Match(TokenType::ASC); // optional ASC
+    }
+
+    // LIMIT clause
+    if (Check(TokenType::LIMIT)) {
+        Consume();
+        stmt->limit_count = std::stoi(Expect(TokenType::INTEGER_LITERAL).value);
+    }
 
     return stmt;
 }

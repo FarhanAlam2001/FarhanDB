@@ -304,6 +304,51 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt,
         rows.push_back(selected);
     }
 
+    // ✅ DISTINCT — remove duplicate rows
+    if (stmt->is_distinct) {
+        Result unique_rows;
+        for (auto& row : rows) {
+            bool found = false;
+            for (auto& urow : unique_rows)
+                if (urow == row) { found = true; break; }
+            if (!found) unique_rows.push_back(row);
+        }
+        rows = unique_rows;
+    }
+
+    // ✅ ORDER BY — sort rows by specified column
+    if (!stmt->order_by_col.empty()) {
+        // Find column index in selected columns
+        int sort_idx = -1;
+        for (size_t i = 0; i < col_names.size(); i++) {
+            if (col_names[i] == stmt->order_by_col) {
+                sort_idx = (int)i; break;
+            }
+        }
+        if (sort_idx >= 0) {
+            bool desc = stmt->order_by_desc;
+            std::sort(rows.begin(), rows.end(),
+                [sort_idx, desc](const Row& a, const Row& b) {
+                    if (sort_idx >= (int)a.size() || sort_idx >= (int)b.size())
+                        return false;
+                    // Try numeric sort first
+                    try {
+                        double va = std::stod(a[sort_idx]);
+                        double vb = std::stod(b[sort_idx]);
+                        return desc ? va > vb : va < vb;
+                    } catch (...) {
+                        // Fall back to string sort
+                        return desc ? a[sort_idx] > b[sort_idx]
+                                    : a[sort_idx] < b[sort_idx];
+                    }
+                });
+        }
+    }
+
+    // ✅ LIMIT — restrict number of rows returned
+    if (stmt->limit_count >= 0 && (int)rows.size() > stmt->limit_count)
+        rows.resize(stmt->limit_count);
+
     return {true, std::to_string(rows.size()) + " row(s) returned.", rows, col_names, ""};
 }
 

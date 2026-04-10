@@ -75,11 +75,19 @@ TokenType Lexer::KeywordType(const std::string& word) const {
     if (upper == "AVG")      return TokenType::AVG;
     if (upper == "MAX")      return TokenType::MAX;
     if (upper == "MIN")      return TokenType::MIN;
-    // ✅ JOIN keywords
+    // JOIN keywords
     if (upper == "JOIN")     return TokenType::JOIN;
     if (upper == "INNER")    return TokenType::INNER;
     if (upper == "LEFT")     return TokenType::LEFT;
     if (upper == "RIGHT")    return TokenType::RIGHT;
+    // ORDER BY / LIMIT / DISTINCT
+    if (upper == "ORDER")    return TokenType::ORDER;
+    if (upper == "BY")       return TokenType::BY;
+    if (upper == "ASC")      return TokenType::ASC;
+    if (upper == "DESC")     return TokenType::DESC;
+    if (upper == "LIMIT")    return TokenType::LIMIT;
+    if (upper == "DISTINCT") return TokenType::DISTINCT;
+
     return TokenType::IDENTIFIER;
 }
 
@@ -111,7 +119,7 @@ Token Lexer::NextToken() {
         case '!':
             if (Peek() == '=') { Advance(); return {TokenType::NEQ, "!=", line_}; }
             break;
-        case '.':  return {TokenType::DOT,       ".",  line_}; // ✅ table.column
+        case '.':  return {TokenType::DOT,       ".",  line_};
         case ',':  return {TokenType::COMMA,     ",",  line_};
         case ';':  return {TokenType::SEMICOLON,  ";",  line_};
         case '(':  return {TokenType::LPAREN,    "(",  line_};

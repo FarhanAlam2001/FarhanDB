@@ -14,8 +14,11 @@ enum class TokenType {
     // Aggregate functions
     COUNT, SUM, AVG, MAX, MIN,
 
-    // ✅ JOIN
+    // JOIN
     JOIN, INNER, LEFT, RIGHT,
+
+    // ORDER BY / LIMIT / DISTINCT
+    ORDER, BY, ASC, DESC, LIMIT, DISTINCT,
 
     // Literals
     INTEGER_LITERAL,
@@ -26,7 +29,7 @@ enum class TokenType {
     EQ, NEQ, LT, GT, LTE, GTE,
     PLUS, MINUS, STAR, SLASH,
     COMMA, SEMICOLON, LPAREN, RPAREN,
-    DOT,  // ✅ for table.column syntax
+    DOT,
 
     // Special
     EOF_TOKEN,

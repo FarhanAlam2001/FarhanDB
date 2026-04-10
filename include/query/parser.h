@@ -39,10 +39,16 @@ struct Statement {
     std::string                 aggregate_func;
     std::string                 aggregate_col;
 
-    // ✅ JOIN support
-    std::string                 join_table;     // second table name
-    std::string                 join_left_col;  // left table column
-    std::string                 join_right_col; // right table column
+    // JOIN support
+    std::string                 join_table;
+    std::string                 join_left_col;
+    std::string                 join_right_col;
+
+    // ORDER BY / LIMIT / DISTINCT
+    std::string                 order_by_col;   // column to sort by
+    bool                        order_by_desc = false; // true = DESC, false = ASC
+    int                         limit_count   = -1;    // -1 means no limit
+    bool                        is_distinct   = false;
 };
 
 class Parser {
