@@ -3,7 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Language: C++17](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Mac-lightgrey.svg)]()
-[![Version](https://img.shields.io/badge/Version-2.0.0-green.svg)]()
+[![Version](https://img.shields.io/badge/Version-3.0.0-green.svg)]()
+[![GUI](https://img.shields.io/badge/GUI-Qt%206.11-blueviolet.svg)]()
 
 ## About
 
@@ -13,11 +14,27 @@ This project was built to deeply understand how real-world databases like MySQL 
 
 > Think of it as a mini database engine that you can actually read, understand and learn from.
 
+**v3.0.0 introduces a full Qt6 desktop GUI** with SQL Mode, Beginner Mode, Server Mode, light/dark themes and a live database explorer sidebar.
+
 **Who is this for?**
 - Developers who want to understand database internals
 - C++ systems programming enthusiasts
 - Students studying database implementation
 - Anyone curious about how SQL databases work under the hood
+
+---
+
+## GUI Preview
+
+FarhanDB now ships with a full desktop application built with Qt 6:
+
+- **SQL Mode** — Write and run SQL queries with results table and query history
+- **Beginner Mode** — No SQL knowledge needed — use forms to create tables, insert, view and delete records
+- **Server Mode** — Start a TCP server on port 5555 for remote connections
+- **Light Theme** — Frutiger Aero inspired blue design
+- **Dark Theme** — Darcula inspired dark design
+- **Database Explorer** — Sidebar showing all databases and tables
+- **Query History** — Last 100 queries stored per session
 
 ---
 
@@ -46,8 +63,7 @@ This project was built to deeply understand how real-world databases like MySQL 
 - **Multiple Databases** — CREATE DATABASE, USE, SHOW DATABASES, DROP DATABASE
 - **SQL Comments** — Support for -- comment syntax
 - **TCP Network Server** — Accept SQL connections on port 5555
-- **Beginner Mode** — Step-by-step menu interface for non-SQL users
-- **SQL Mode** — Direct SQL query interface
+- **Qt6 Desktop GUI** — Full graphical interface with light/dark themes
 
 ---
 
@@ -79,9 +95,6 @@ UPDATE students SET name = 'Ahmed', age = 20 WHERE id = 1;
 
 -- Delete records
 DELETE FROM students WHERE id = 1;
-
--- Drop a table
-DROP TABLE students;
 
 -- Aggregate functions
 SELECT COUNT(*) FROM students;
@@ -132,6 +145,10 @@ DROP DATABASE school;
 
 ```
 ┌─────────────────────────────────────┐
+│           Qt6 Desktop GUI           │
+│  SQL Mode / Beginner Mode /         │
+│  Server Mode / Theme Toggle         │
+├─────────────────────────────────────┤
 │           User Interface            │
 │  Beginner Mode / SQL Mode /         │
 │  TCP Server (port 5555)             │
@@ -155,11 +172,16 @@ DROP DATABASE school;
 
 ## Building from Source
 
-### Requirements
+### CLI Version Requirements
 - C++17 compiler (GCC 10+ or Clang 10+)
 - CMake 3.20+
 
-### Build Steps (Windows)
+### GUI Version Requirements
+- C++17 compiler (GCC 10+ or Clang 10+)
+- CMake 3.20+
+- Qt 6.11+ with Widgets module
+
+### Build CLI (Windows)
 
 ```cmd
 git clone https://github.com/FarhanAlam2001/FarhanDB.git
@@ -171,23 +193,27 @@ cmake --build .
 farhandb.exe
 ```
 
-### Build Steps (Linux/Mac)
+### Build GUI (Windows)
+
+```cmd
+git clone -b gui https://github.com/FarhanAlam2001/FarhanDB.git FarhanDB-GUI
+cd FarhanDB-GUI
+```
+Then open `CMakeLists.txt` in Qt Creator and build.
+
+### Build CLI (Linux/Mac)
 
 ```bash
 git clone https://github.com/FarhanAlam2001/FarhanDB.git
 cd FarhanDB
-mkdir build
-cd build
-cmake ..
-cmake --build .
+mkdir build && cd build
+cmake .. && cmake --build .
 ./farhandb
 ```
 
 ---
 
-## Usage
-
-When you run FarhanDB you will be greeted with a mode selection:
+## Usage — CLI
 
 ```
 1. Beginner Mode   (step-by-step menu)
@@ -196,38 +222,21 @@ When you run FarhanDB you will be greeted with a mode selection:
 4. Exit
 ```
 
-### Beginner Mode
-Perfect for users who don't know SQL. Just follow the prompts:
-- Create tables by answering simple questions
-- Insert records field by field
-- View records in a formatted table
-- Delete records safely by ID only
+## Usage — GUI
 
-### SQL Mode
-For users who know SQL — type any supported SQL query ending with `;`
+Download the latest release, extract and run `FarhanDB-GUI.exe`.
 
-Database management commands work directly in SQL Mode:
-```sql
-CREATE DATABASE mydb;
-USE mydb;
-SHOW DATABASES;
-DROP DATABASE mydb;
-```
-
-Type `menu` to go back, `exit` to quit.
-
-### Server Mode
-Starts a TCP server on port 5555. Connect from any program:
-```bash
-telnet localhost 5555
-```
-Then type SQL queries directly. Multiple clients can connect simultaneously.
+- **SQL Mode** — Type any SQL query and press Run or Ctrl+Enter
+- **Beginner Mode** — Use forms — no SQL needed
+- **Server Mode** — Start TCP server and connect remotely
+- **Dark/Light toggle** — Switch themes instantly
+- **Sidebar** — Double-click a table to auto-run SELECT
 
 ---
 
 ## Data Storage
 
-Each database gets its own set of files created automatically:
+Each database gets its own set of files:
 
 | File | Purpose |
 |---|---|
@@ -242,26 +251,17 @@ Each database gets its own set of files created automatically:
 ```
 FarhanDB/
 ├── src/
-│   ├── storage/
-│   │   ├── page.cpp                # Slotted page layout
-│   │   ├── disk_manager.cpp        # Raw disk I/O
-│   │   ├── buffer_pool.cpp         # LRU buffer pool
-│   │   └── wal.cpp                 # Write-ahead log
-│   ├── index/
-│   │   └── btree.cpp               # B+ Tree index
-│   ├── query/
-│   │   ├── lexer.cpp               # SQL tokenizer
-│   │   ├── parser.cpp              # SQL parser
-│   │   ├── catalog.cpp             # Table catalog
-│   │   ├── optimizer.cpp           # Query optimizer
-│   │   └── executor.cpp            # Query executor
-│   ├── transaction/
-│   │   ├── lock_manager.cpp        # Locking
-│   │   └── transaction_manager.cpp # Transaction management
-│   ├── server/
-│   │   └── server.cpp              # TCP network server
-│   └── main.cpp                    # Entry point + UI
-├── include/                        # Header files
+│   ├── storage/        # Page layout, disk I/O, buffer pool, WAL
+│   ├── index/          # B+ Tree index
+│   ├── query/          # Lexer, parser, catalog, optimizer, executor
+│   ├── transaction/    # Lock manager, transaction manager
+│   ├── server/         # TCP network server
+│   ├── ui/             # Qt GUI windows and widgets (gui branch)
+│   ├── bridge/         # Qt ↔ FarhanDB engine bridge (gui branch)
+│   └── main.cpp
+├── include/            # Header files
+├── styles/             # QSS theme files (gui branch)
+├── icons/              # App icons (gui branch)
 ├── CMakeLists.txt
 └── README.md
 ```
@@ -277,7 +277,7 @@ FarhanDB/
 - [x] ACID transactions
 - [x] Beginner mode interface
 - [x] Multi-page table scanning
-- [x] JOIN support (fixed column ordering)
+- [x] JOIN support
 - [x] Aggregate functions (COUNT, SUM, AVG, MAX, MIN)
 - [x] Query optimizer
 - [x] ORDER BY, LIMIT, DISTINCT
@@ -289,9 +289,10 @@ FarhanDB/
 - [x] ALTER TABLE (ADD/DROP COLUMN)
 - [x] Multiple database support
 - [x] Network/TCP interface
-- [ ] Qt GUI
+- [x] Qt6 Desktop GUI with light/dark themes
 - [ ] Python client library
 - [ ] Real index usage during SELECT
+- [ ] Performance benchmarks
 
 ---
 
