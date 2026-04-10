@@ -551,6 +551,7 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
     if (!right_schema)
         return {false, "Table '" + stmt->join_table + "' does not exist.", {}, {}, ""};
 
+    // Find join column indices
     int left_col_idx = -1, right_col_idx = -1;
     for (size_t i = 0; i < left_schema->columns.size(); i++)
         if (left_schema->columns[i].name == stmt->join_left_col)
@@ -564,31 +565,45 @@ ExecutionResult Executor::ExecJoin(std::shared_ptr<Statement> stmt) {
     if (right_col_idx < 0)
         return {false, "Column '" + stmt->join_right_col + "' not found.", {}, {}, ""};
 
+    // Scan both tables BEFORE any swapping
+    Result left_rows  = ScanTable(left_schema);
+    Result right_rows = ScanTable(right_schema);
+
+    // Build column names in original order (left table first, right table second)
     std::vector<std::string> col_names;
     for (auto& col : left_schema->columns)
         col_names.push_back(stmt->table_name + "." + col.name);
     for (auto& col : right_schema->columns)
         col_names.push_back(stmt->join_table + "." + col.name);
 
-    // ✅ Optimizer: put smaller table on outer loop
-    Result left_rows  = ScanTable(left_schema);
-    Result right_rows = ScanTable(right_schema);
-
-    // If right table is smaller, swap for efficiency
-    if (right_rows.size() < left_rows.size()) {
-        std::swap(left_rows, right_rows);
-        std::swap(left_col_idx, right_col_idx);
-    }
-
+    // Nested loop join — always left outer, right inner
+    // Optimizer: if right is smaller use it as outer but keep column order correct
     Result result_rows;
-    for (auto& left_row : left_rows) {
+
+    if (right_rows.size() < left_rows.size()) {
+        // Use right as outer loop for speed, but still combine as left+right
         for (auto& right_row : right_rows) {
-            if (left_col_idx < (int)left_row.size() &&
-                right_col_idx < (int)right_row.size() &&
-                left_row[left_col_idx] == right_row[right_col_idx]) {
-                Row combined = left_row;
-                combined.insert(combined.end(), right_row.begin(), right_row.end());
-                result_rows.push_back(combined);
+            for (auto& left_row : left_rows) {
+                if (left_col_idx < (int)left_row.size() &&
+                    right_col_idx < (int)right_row.size() &&
+                    left_row[left_col_idx] == right_row[right_col_idx]) {
+                    // Always output left columns first, then right columns
+                    Row combined = left_row;
+                    combined.insert(combined.end(), right_row.begin(), right_row.end());
+                    result_rows.push_back(combined);
+                }
+            }
+        }
+    } else {
+        for (auto& left_row : left_rows) {
+            for (auto& right_row : right_rows) {
+                if (left_col_idx < (int)left_row.size() &&
+                    right_col_idx < (int)right_row.size() &&
+                    left_row[left_col_idx] == right_row[right_col_idx]) {
+                    Row combined = left_row;
+                    combined.insert(combined.end(), right_row.begin(), right_row.end());
+                    result_rows.push_back(combined);
+                }
             }
         }
     }
