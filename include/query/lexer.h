@@ -32,6 +32,9 @@ enum class TokenType {
     // Foreign key
     FOREIGN, REFERENCES,
 
+    // BETWEEN / LIKE
+    BETWEEN, LIKE,
+
     // Literals
     INTEGER_LITERAL,
     STRING_LITERAL,
@@ -70,6 +73,7 @@ private:
     char        Peek() const;
     char        Advance();
     void        SkipWhitespace();
+    void        SkipComment();
     Token       ReadString();
     Token       ReadNumber();
     Token       ReadIdentifierOrKeyword();

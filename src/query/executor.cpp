@@ -7,6 +7,7 @@
 #include <climits>
 #include <cfloat>
 #include <unordered_map>
+#include <functional>
 #include <set>
 
 namespace FarhanDB {
@@ -181,6 +182,41 @@ bool Executor::MatchesConditions(const Row& row, const TableSchema& schema,
             else if (cond.op == "<")  { try { match = std::stod(cell) < std::stod(val); } catch(...){} }
             else if (cond.op == ">=") { try { match = std::stod(cell) >= std::stod(val); } catch(...){} }
             else if (cond.op == "<=") { try { match = std::stod(cell) <= std::stod(val); } catch(...){} }
+            else if (cond.op == "BETWEEN") {
+                // value is "low,high"
+                auto comma = val.find(',');
+                if (comma != std::string::npos) {
+                    std::string low  = val.substr(0, comma);
+                    std::string high = val.substr(comma + 1);
+                    try {
+                        double v = std::stod(cell);
+                        match = (v >= std::stod(low) && v <= std::stod(high));
+                    } catch(...) {
+                        match = (cell >= low && cell <= high);
+                    }
+                }
+            }
+            else if (cond.op == "LIKE") {
+                // Pattern matching: % = any chars, _ = single char
+                const std::string& pattern = val;
+                std::string text = cell;
+                // Simple regex-like matching
+                std::function<bool(size_t, size_t)> like_match;
+                like_match = [&](size_t ti, size_t pi) -> bool {
+                    if (pi == pattern.size()) return ti == text.size();
+                    if (pattern[pi] == '%') {
+                        // % matches zero or more chars
+                        for (size_t k = ti; k <= text.size(); k++)
+                            if (like_match(k, pi + 1)) return true;
+                        return false;
+                    }
+                    if (ti == text.size()) return false;
+                    if (pattern[pi] == '_' || pattern[pi] == text[ti])
+                        return like_match(ti + 1, pi + 1);
+                    return false;
+                };
+                match = like_match(0, 0);
+            }
         }
 
         if (first) {

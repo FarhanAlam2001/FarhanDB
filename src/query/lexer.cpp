@@ -23,6 +23,11 @@ void Lexer::SkipWhitespace() {
     while (pos_ < input_.size() && std::isspace(Peek())) Advance();
 }
 
+// Skip -- comment to end of line
+void Lexer::SkipComment() {
+    while (pos_ < input_.size() && Peek() != '\n') Advance();
+}
+
 bool Lexer::HasMore() const {
     return pos_ < input_.size();
 }
@@ -91,6 +96,8 @@ TokenType Lexer::KeywordType(const std::string& word) const {
     if (upper == "IN")         return TokenType::IN;
     if (upper == "FOREIGN")    return TokenType::FOREIGN;
     if (upper == "REFERENCES") return TokenType::REFERENCES;
+    if (upper == "BETWEEN")    return TokenType::BETWEEN;
+    if (upper == "LIKE")       return TokenType::LIKE;
 
     return TokenType::IDENTIFIER;
 }
@@ -104,6 +111,12 @@ Token Lexer::ReadIdentifierOrKeyword() {
 Token Lexer::NextToken() {
     SkipWhitespace();
     if (!HasMore()) return {TokenType::EOF_TOKEN, "", line_};
+
+    // Skip -- comments
+    if (Peek() == '-' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '-') {
+        SkipComment();
+        return NextToken(); // recurse to get next real token
+    }
 
     char c = Peek();
 

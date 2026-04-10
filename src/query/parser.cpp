@@ -201,8 +201,21 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
             do {
                 Condition cond;
                 cond.column = Expect(TokenType::IDENTIFIER).value;
-                cond.op     = Consume().value;
-                cond.value  = Consume().value;
+                if (Check(TokenType::BETWEEN)) {
+                    Consume();
+                    std::string low  = Consume().value;
+                    Expect(TokenType::AND);
+                    std::string high = Consume().value;
+                    cond.op    = "BETWEEN";
+                    cond.value = low + "," + high;
+                } else if (Check(TokenType::LIKE)) {
+                    Consume();
+                    cond.op    = "LIKE";
+                    cond.value = Consume().value;
+                } else {
+                    cond.op    = Consume().value;
+                    cond.value = Consume().value;
+                }
                 if (Check(TokenType::OR)) {
                     cond.connector = "OR"; Consume();
                     conditions.push_back(cond);
@@ -360,8 +373,25 @@ std::vector<Condition> Parser::ParseWhere() {
     do {
         Condition cond;
         cond.column = Expect(TokenType::IDENTIFIER).value;
-        cond.op     = Consume().value;
-        cond.value  = Consume().value;
+
+        if (Check(TokenType::BETWEEN)) {
+            // BETWEEN low AND high
+            Consume(); // consume BETWEEN
+            std::string low  = Consume().value;
+            Expect(TokenType::AND);
+            std::string high = Consume().value;
+            cond.op    = "BETWEEN";
+            cond.value = low + "," + high;
+        } else if (Check(TokenType::LIKE)) {
+            // LIKE pattern
+            Consume(); // consume LIKE
+            cond.op    = "LIKE";
+            cond.value = Consume().value;
+        } else {
+            cond.op    = Consume().value;
+            cond.value = Consume().value;
+        }
+
         if (Check(TokenType::OR)) {
             cond.connector = "OR"; Consume();
             conditions.push_back(cond);
