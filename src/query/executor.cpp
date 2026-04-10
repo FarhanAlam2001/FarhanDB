@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <climits>
 #include <cfloat>
+#include <unordered_map>
 
 namespace FarhanDB {
 
@@ -88,6 +89,9 @@ ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
         col.type           = (cd.type == "INT") ? DataType::INT : DataType::VARCHAR;
         col.size           = cd.size;
         col.is_primary_key = cd.is_primary_key;
+        col.not_null       = cd.not_null;
+        col.has_default    = cd.has_default;
+        col.default_value  = cd.default_value;
         schema.columns.push_back(col);
     }
 
@@ -149,27 +153,43 @@ Row Executor::DeserializeRow(const TableSchema& schema,
 
 bool Executor::MatchesConditions(const Row& row, const TableSchema& schema,
                                   const std::vector<Condition>& conditions) {
-    for (const auto& cond : conditions) {
-        int col_idx = -1;
-        for (size_t i = 0; i < schema.columns.size(); i++) {
-            if (schema.columns[i].name == cond.column) { col_idx = i; break; }
-        }
-        if (col_idx < 0 || col_idx >= (int)row.size()) return false;
+    if (conditions.empty()) return true;
 
-        const std::string& cell = row[col_idx];
-        const std::string& val  = cond.value;
+    // Evaluate each condition with AND/OR logic
+    bool result = true;
+    bool first  = true;
+
+    for (size_t i = 0; i < conditions.size(); i++) {
+        const auto& cond = conditions[i];
+        int col_idx = -1;
+        for (size_t j = 0; j < schema.columns.size(); j++) {
+            if (schema.columns[j].name == cond.column) { col_idx = j; break; }
+        }
 
         bool match = false;
-        if (cond.op == "=")       match = (cell == val);
-        else if (cond.op == "!=") match = (cell != val);
-        else if (cond.op == ">")  match = (std::stod(cell) > std::stod(val));
-        else if (cond.op == "<")  match = (std::stod(cell) < std::stod(val));
-        else if (cond.op == ">=") match = (std::stod(cell) >= std::stod(val));
-        else if (cond.op == "<=") match = (std::stod(cell) <= std::stod(val));
+        if (col_idx >= 0 && col_idx < (int)row.size()) {
+            const std::string& cell = row[col_idx];
+            const std::string& val  = cond.value;
+            if (cond.op == "=")       match = (cell == val);
+            else if (cond.op == "!=") match = (cell != val);
+            else if (cond.op == ">")  { try { match = std::stod(cell) > std::stod(val); } catch(...){} }
+            else if (cond.op == "<")  { try { match = std::stod(cell) < std::stod(val); } catch(...){} }
+            else if (cond.op == ">=") { try { match = std::stod(cell) >= std::stod(val); } catch(...){} }
+            else if (cond.op == "<=") { try { match = std::stod(cell) <= std::stod(val); } catch(...){} }
+        }
 
-        if (!match) return false;
+        if (first) {
+            result = match;
+            first  = false;
+        } else {
+            // Previous condition connector determines how to combine
+            if (i > 0 && conditions[i-1].connector == "OR")
+                result = result || match;
+            else
+                result = result && match;
+        }
     }
-    return true;
+    return result;
 }
 
 Result Executor::ScanTable(TableSchema* schema) {
@@ -225,10 +245,28 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
     if (!schema)
         return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
 
-    if (stmt->values.size() != schema->columns.size())
+    // Apply DEFAULT values for missing columns
+    std::vector<std::string> final_values = stmt->values;
+    if (final_values.size() < schema->columns.size()) {
+        for (size_t i = final_values.size(); i < schema->columns.size(); i++) {
+            if (schema->columns[i].has_default)
+                final_values.push_back(schema->columns[i].default_value);
+            else
+                final_values.push_back("");
+        }
+    }
+
+    if (final_values.size() != schema->columns.size())
         return {false, "Column count mismatch.", {}, {}, ""};
 
-    std::string data = SerializeRow(*schema, stmt->values);
+    // NOT NULL validation
+    for (size_t i = 0; i < schema->columns.size(); i++) {
+        if (schema->columns[i].not_null && final_values[i].empty())
+            return {false, "Column '" + schema->columns[i].name +
+                    "' cannot be NULL.", {}, {}, ""};
+    }
+
+    std::string data = SerializeRow(*schema, final_values);
 
     for (auto pid : schema->page_ids) {
         Page* page = bpm_->FetchPage(pid);
@@ -314,6 +352,59 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt,
             if (!found) unique_rows.push_back(row);
         }
         rows = unique_rows;
+    }
+
+    // ✅ GROUP BY — group rows by column value
+    if (!stmt->group_by_col.empty()) {
+        int grp_idx = -1;
+        for (size_t i = 0; i < col_names.size(); i++)
+            if (col_names[i] == stmt->group_by_col) { grp_idx = i; break; }
+
+        if (grp_idx >= 0) {
+            // Keep only first row per unique group value
+            std::unordered_map<std::string, Row> groups;
+            std::vector<std::string> order;
+            for (auto& row : rows) {
+                if (grp_idx < (int)row.size()) {
+                    if (!groups.count(row[grp_idx])) {
+                        groups[row[grp_idx]] = row;
+                        order.push_back(row[grp_idx]);
+                    }
+                }
+            }
+            rows.clear();
+            for (auto& key : order)
+                rows.push_back(groups[key]);
+        }
+
+        // ✅ HAVING — filter groups
+        if (!stmt->having_col.empty()) {
+            int hav_idx = -1;
+            for (size_t i = 0; i < col_names.size(); i++)
+                if (col_names[i] == stmt->having_col) { hav_idx = i; break; }
+
+            if (hav_idx >= 0) {
+                Result filtered;
+                for (auto& row : rows) {
+                    if (hav_idx >= (int)row.size()) continue;
+                    bool match = false;
+                    try {
+                        double cell = std::stod(row[hav_idx]);
+                        double val  = std::stod(stmt->having_val);
+                        if (stmt->having_op == "=")       match = (cell == val);
+                        else if (stmt->having_op == ">")  match = (cell > val);
+                        else if (stmt->having_op == "<")  match = (cell < val);
+                        else if (stmt->having_op == ">=") match = (cell >= val);
+                        else if (stmt->having_op == "<=") match = (cell <= val);
+                        else if (stmt->having_op == "!=") match = (cell != val);
+                    } catch (...) {
+                        match = (row[hav_idx] == stmt->having_val);
+                    }
+                    if (match) filtered.push_back(row);
+                }
+                rows = filtered;
+            }
+        }
     }
 
     // ✅ ORDER BY — sort rows by specified column

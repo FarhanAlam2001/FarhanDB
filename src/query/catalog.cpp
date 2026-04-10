@@ -40,7 +40,6 @@ TableSchema* Catalog::GetTable(const std::string& table_name) {
 void Catalog::Save() {
     std::ofstream f(catalog_file_);
     for (auto& [name, schema] : tables_) {
-        // Save page IDs on one line
         f << "TABLE " << schema.table_name << " " << schema.root_page_id;
         f << " PAGES " << schema.page_ids.size();
         for (auto pid : schema.page_ids) f << " " << pid;
@@ -50,7 +49,10 @@ void Catalog::Save() {
             f << "COL " << col.name << " "
               << (col.type == DataType::INT ? "INT" : "VARCHAR") << " "
               << col.size << " "
-              << (col.is_primary_key ? 1 : 0) << "\n";
+              << (col.is_primary_key ? 1 : 0) << " "
+              << (col.not_null ? 1 : 0) << " "
+              << (col.has_default ? 1 : 0) << " "
+              << col.default_value << "\n";
         }
         f << "END\n";
     }
@@ -71,7 +73,6 @@ void Catalog::Load() {
             TableSchema schema;
             ss >> schema.table_name >> schema.root_page_id;
 
-            // Load page IDs if present
             std::string pages_tag;
             if (ss >> pages_tag && pages_tag == "PAGES") {
                 size_t count;
@@ -83,7 +84,6 @@ void Catalog::Load() {
                 }
             }
 
-            // If no page_ids saved, add root_page_id
             if (schema.page_ids.empty() && schema.root_page_id != UINT32_MAX)
                 schema.page_ids.push_back(schema.root_page_id);
 
@@ -92,10 +92,13 @@ void Catalog::Load() {
         } else if (tag == "COL" && current) {
             Column col;
             std::string type_str;
-            int pk;
-            ss >> col.name >> type_str >> col.size >> pk;
-            col.type = (type_str == "INT") ? DataType::INT : DataType::VARCHAR;
+            int pk, nn, hd;
+            ss >> col.name >> type_str >> col.size >> pk >> nn >> hd;
+            col.type           = (type_str == "INT") ? DataType::INT : DataType::VARCHAR;
             col.is_primary_key = (pk == 1);
+            col.not_null       = (nn == 1);
+            col.has_default    = (hd == 1);
+            if (col.has_default) ss >> col.default_value;
             current->columns.push_back(col);
         } else if (tag == "END") {
             current = nullptr;

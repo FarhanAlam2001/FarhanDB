@@ -118,15 +118,30 @@ std::shared_ptr<Statement> Parser::ParseSelect() {
     if (Check(TokenType::WHERE))
         stmt->conditions = ParseWhere();
 
+    // GROUP BY clause
+    if (Check(TokenType::GROUP)) {
+        Consume();
+        Expect(TokenType::BY);
+        stmt->group_by_col = Expect(TokenType::IDENTIFIER).value;
+    }
+
+    // HAVING clause
+    if (Check(TokenType::HAVING)) {
+        Consume();
+        stmt->having_col = Expect(TokenType::IDENTIFIER).value;
+        stmt->having_op  = Consume().value;
+        stmt->having_val = Consume().value;
+    }
+
     // ORDER BY clause
     if (Check(TokenType::ORDER)) {
-        Consume(); // consume ORDER
+        Consume();
         Expect(TokenType::BY);
         stmt->order_by_col = Expect(TokenType::IDENTIFIER).value;
         if (Match(TokenType::DESC))
             stmt->order_by_desc = true;
         else
-            Match(TokenType::ASC); // optional ASC
+            Match(TokenType::ASC);
     }
 
     // LIMIT clause
@@ -189,17 +204,35 @@ std::shared_ptr<Statement> Parser::ParseCreateTable() {
     while (!Check(TokenType::RPAREN)) {
         ColumnDef col;
         col.name = Expect(TokenType::IDENTIFIER).value;
-        if (Check(TokenType::INT)) { Consume(); col.type = "INT"; col.size = 4; }
-        else if (Check(TokenType::VARCHAR)) {
+
+        if (Check(TokenType::INT)) {
+            Consume(); col.type = "INT"; col.size = 4;
+        } else if (Check(TokenType::VARCHAR)) {
             Consume(); col.type = "VARCHAR";
             Expect(TokenType::LPAREN);
             col.size = std::stoi(Consume().value);
             Expect(TokenType::RPAREN);
         }
-        if (Check(TokenType::PRIMARY)) {
-            Consume(); Expect(TokenType::KEY);
-            col.is_primary_key = true;
+
+        // Parse column constraints in any order
+        bool parsing_constraints = true;
+        while (parsing_constraints) {
+            if (Check(TokenType::PRIMARY)) {
+                Consume(); Expect(TokenType::KEY);
+                col.is_primary_key = true;
+            } else if (Check(TokenType::NOT)) {
+                Consume();
+                Expect(TokenType::NULLVAL);
+                col.not_null = true;
+            } else if (Check(TokenType::DEFAULT)) {
+                Consume();
+                col.has_default   = true;
+                col.default_value = Consume().value;
+            } else {
+                parsing_constraints = false;
+            }
         }
+
         stmt->column_defs.push_back(col);
         if (!Check(TokenType::RPAREN)) Expect(TokenType::COMMA);
     }
@@ -219,13 +252,35 @@ std::shared_ptr<Statement> Parser::ParseDropTable() {
 std::vector<Condition> Parser::ParseWhere() {
     Expect(TokenType::WHERE);
     std::vector<Condition> conditions;
+
     do {
         Condition cond;
         cond.column = Expect(TokenType::IDENTIFIER).value;
         cond.op     = Consume().value;
         cond.value  = Consume().value;
-        conditions.push_back(cond);
-    } while (Match(TokenType::AND));
+
+        // Check for OR or AND connector
+        if (Check(TokenType::OR)) {
+            cond.connector = "OR";
+            Consume();
+            conditions.push_back(cond);
+        } else if (Check(TokenType::AND)) {
+            cond.connector = "AND";
+            // let the while condition consume AND
+            conditions.push_back(cond);
+            Consume(); // consume AND
+        } else {
+            cond.connector = "AND";
+            conditions.push_back(cond);
+            break;
+        }
+    } while (!Check(TokenType::EOF_TOKEN) &&
+             !Check(TokenType::ORDER) &&
+             !Check(TokenType::GROUP) &&
+             !Check(TokenType::HAVING) &&
+             !Check(TokenType::LIMIT) &&
+             !Check(TokenType::SEMICOLON));
+
     return conditions;
 }
 

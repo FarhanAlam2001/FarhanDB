@@ -14,13 +14,16 @@ struct Column {
     DataType    type;
     int         size;
     bool        is_primary_key;
+    bool        not_null      = false;  // NOT NULL constraint
+    bool        has_default   = false;  // has DEFAULT value
+    std::string default_value = "";     // DEFAULT value
 };
 
 struct TableSchema {
     std::string              table_name;
     std::vector<Column>      columns;
     uint32_t                 root_page_id;
-    std::vector<uint32_t>    page_ids;   // all pages for this table
+    std::vector<uint32_t>    page_ids;
 };
 
 class Catalog {

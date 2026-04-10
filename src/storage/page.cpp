@@ -7,7 +7,7 @@ namespace FarhanDB {
 Page::Page() {
     std::memset(data_, 0, PAGE_SIZE);
     Header()->page_id           = INVALID_PAGE_ID;
-    Header()->free_space_offset = sizeof(PageHeader);
+    Header()->free_space_offset = PAGE_SIZE;  // records grow backwards from end
     Header()->slot_count        = 0;
     Header()->free_space        = PAGE_SIZE - sizeof(PageHeader);
     Header()->is_dirty          = 0;
@@ -24,20 +24,29 @@ void      Page::SetDirty(bool dirty) { Header()->is_dirty = dirty ? 1 : 0; }
 uint16_t  Page::GetFreeSpace() const { return Header()->free_space; }
 
 slot_id_t Page::InsertRecord(const char* data, uint16_t length) {
-    if (Header()->free_space < length + sizeof(Slot)) return UINT16_MAX;
+    // Space needed: length for record + sizeof(Slot) for slot entry
+    uint16_t space_needed = length + sizeof(Slot);
+    if (Header()->free_space < space_needed) return UINT16_MAX;
 
-    // Place record at free_space_offset
-    uint16_t offset = Header()->free_space_offset;
-    std::memcpy(data_ + offset, data, length);
+    // Slots grow forward from after PageHeader
+    // Records grow backward from end of page
+    uint16_t slot_end    = sizeof(PageHeader) + (Header()->slot_count + 1) * sizeof(Slot);
+    uint16_t record_start = Header()->free_space_offset - length;
 
-    // Add slot entry
+    // Make sure they don't overlap
+    if (record_start < slot_end) return UINT16_MAX;
+
+    // Write record at record_start (growing from end backwards)
+    Header()->free_space_offset = record_start;
+    std::memcpy(data_ + record_start, data, length);
+
+    // Add slot entry (growing forward from PageHeader)
     slot_id_t slot_id = Header()->slot_count;
-    Slots()[slot_id].offset = offset;
+    Slots()[slot_id].offset = record_start;
     Slots()[slot_id].length = length;
 
-    Header()->free_space_offset += length;
     Header()->slot_count++;
-    Header()->free_space -= (length + sizeof(Slot));
+    Header()->free_space -= space_needed;
     Header()->is_dirty = 1;
 
     return slot_id;
@@ -65,7 +74,7 @@ const char* Page::GetData() const { return data_; }
 void Page::Reset(page_id_t id) {
     std::memset(data_, 0, PAGE_SIZE);
     Header()->page_id           = id;
-    Header()->free_space_offset = sizeof(PageHeader);
+    Header()->free_space_offset = PAGE_SIZE;  // records grow backwards from end
     Header()->slot_count        = 0;
     Header()->free_space        = PAGE_SIZE - sizeof(PageHeader);
     Header()->is_dirty          = 0;

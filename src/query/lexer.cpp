@@ -87,6 +87,12 @@ TokenType Lexer::KeywordType(const std::string& word) const {
     if (upper == "DESC")     return TokenType::DESC;
     if (upper == "LIMIT")    return TokenType::LIMIT;
     if (upper == "DISTINCT") return TokenType::DISTINCT;
+    // GROUP BY / HAVING
+    if (upper == "GROUP")    return TokenType::GROUP;
+    if (upper == "HAVING")   return TokenType::HAVING;
+    // NULL / DEFAULT
+    if (upper == "NULL")     return TokenType::NULLVAL;
+    if (upper == "DEFAULT")  return TokenType::DEFAULT;
 
     return TokenType::IDENTIFIER;
 }

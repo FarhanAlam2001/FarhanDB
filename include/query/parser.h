@@ -17,12 +17,16 @@ struct ColumnDef {
     std::string type;
     int         size;
     bool        is_primary_key;
+    bool        not_null      = false;
+    bool        has_default   = false;
+    std::string default_value = "";
 };
 
 struct Condition {
     std::string column;
     std::string op;
     std::string value;
+    std::string connector = "AND"; // AND or OR to next condition
 };
 
 struct Statement {
@@ -45,10 +49,16 @@ struct Statement {
     std::string                 join_right_col;
 
     // ORDER BY / LIMIT / DISTINCT
-    std::string                 order_by_col;   // column to sort by
-    bool                        order_by_desc = false; // true = DESC, false = ASC
-    int                         limit_count   = -1;    // -1 means no limit
+    std::string                 order_by_col;
+    bool                        order_by_desc = false;
+    int                         limit_count   = -1;
     bool                        is_distinct   = false;
+
+    // GROUP BY / HAVING
+    std::string                 group_by_col;
+    std::string                 having_col;
+    std::string                 having_op;
+    std::string                 having_val;
 };
 
 class Parser {

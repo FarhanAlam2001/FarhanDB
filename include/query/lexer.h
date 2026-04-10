@@ -20,6 +20,12 @@ enum class TokenType {
     // ORDER BY / LIMIT / DISTINCT
     ORDER, BY, ASC, DESC, LIMIT, DISTINCT,
 
+    // GROUP BY / HAVING
+    GROUP, HAVING,
+
+    // NULL / DEFAULT
+    NULLVAL, DEFAULT,
+
     // Literals
     INTEGER_LITERAL,
     STRING_LITERAL,
