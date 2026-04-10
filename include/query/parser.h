@@ -9,6 +9,7 @@ namespace FarhanDB {
 enum class StatementType {
     SELECT, INSERT, UPDATE, DELETE,
     CREATE_TABLE, DROP_TABLE,
+    CREATE_INDEX,
     BEGIN_TXN, COMMIT_TXN, ROLLBACK_TXN
 };
 
@@ -16,17 +17,20 @@ struct ColumnDef {
     std::string name;
     std::string type;
     int         size;
-    bool        is_primary_key;
-    bool        not_null      = false;
-    bool        has_default   = false;
-    std::string default_value = "";
+    bool        is_primary_key  = false;
+    bool        not_null        = false;
+    bool        has_default     = false;
+    std::string default_value   = "";
+    bool        is_foreign_key  = false;
+    std::string fk_ref_table    = "";
+    std::string fk_ref_column   = "";
 };
 
 struct Condition {
     std::string column;
     std::string op;
     std::string value;
-    std::string connector = "AND"; // AND or OR to next condition
+    std::string connector = "AND";
 };
 
 struct Statement {
@@ -59,6 +63,14 @@ struct Statement {
     std::string                 having_col;
     std::string                 having_op;
     std::string                 having_val;
+
+    // Subquery: WHERE col IN (SELECT ...)
+    std::string                         where_in_col;
+    std::shared_ptr<Statement>          subquery;
+
+    // CREATE INDEX
+    std::string                 index_name;
+    std::string                 index_col;
 };
 
 class Parser {
@@ -84,6 +96,7 @@ private:
     std::shared_ptr<Statement>  ParseDelete();
     std::shared_ptr<Statement>  ParseCreateTable();
     std::shared_ptr<Statement>  ParseDropTable();
+    std::shared_ptr<Statement>  ParseCreateIndex();
     std::vector<Condition>      ParseWhere();
 
     bool IsAggregateToken(TokenType t) const;

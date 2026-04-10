@@ -5,6 +5,8 @@
 #include <vector>
 #include <limits>
 #include <algorithm>
+#include <filesystem>
+#include <set>
 
 #include "storage/disk_manager.h"
 #include "storage/buffer_pool.h"
@@ -19,6 +21,42 @@
 #include "server/server.h"
 
 using namespace FarhanDB;
+
+// ─────────────────────────────────────────────
+//  GLOBALS — declared first so all functions can use them
+// ─────────────────────────────────────────────
+
+std::unique_ptr<DiskManager>        g_disk_manager;
+std::unique_ptr<BufferPoolManager>  g_bpm;
+std::unique_ptr<WAL>                g_wal;
+std::unique_ptr<LockManager>        g_lock_mgr;
+std::unique_ptr<TransactionManager> g_txn_mgr;
+std::unique_ptr<Catalog>            g_catalog;
+std::unique_ptr<Executor>           g_executor;
+
+std::string current_db         = "farhandb";
+std::string current_db_display = "farhandb";
+
+void InitDatabase(const std::string& display_name) {
+    if (g_bpm) g_bpm->FlushAllPages();
+    if (g_wal) g_wal->Flush();
+
+    current_db_display = display_name;
+    std::string file_name = display_name;
+    std::replace(file_name.begin(), file_name.end(), ' ', '_');
+    current_db = file_name;
+
+    g_disk_manager = std::make_unique<DiskManager>(file_name + ".db");
+    g_bpm          = std::make_unique<BufferPoolManager>(
+                         BUFFER_POOL_SIZE, g_disk_manager.get());
+    g_wal          = std::make_unique<WAL>(file_name + ".wal");
+    g_lock_mgr     = std::make_unique<LockManager>();
+    g_txn_mgr      = std::make_unique<TransactionManager>(g_wal.get());
+    g_catalog      = std::make_unique<Catalog>(file_name + ".catalog");
+    g_executor     = std::make_unique<Executor>(
+                         g_bpm.get(), g_catalog.get(),
+                         g_txn_mgr.get(), g_lock_mgr.get());
+}
 
 // ─────────────────────────────────────────────
 //  UTILITIES
@@ -64,7 +102,7 @@ void PrintBanner() {
  |_|  \__,_|_|  |_| |_|\__,_|_| |_|____/|____/
 )" << std::endl;
     PrintLine('=');
-    std::cout << "     Advanced C++ Database Engine v1.0.0" << std::endl;
+    std::cout << "     Advanced C++ Database Engine v1.9.0" << std::endl;
     PrintLine('=');
     std::cout << std::endl;
 }
@@ -416,18 +454,95 @@ void BeginnerMode(Executor* executor, Catalog* catalog) {
 //  SQL MODE
 // ─────────────────────────────────────────────
 
-void SQLMode(Executor* executor) {
+void HandleDatabaseCommand(const std::string& cmd) {
+    std::string upper = cmd;
+    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+    // SHOW DATABASES
+    if (upper.find("SHOW DATABASES") != std::string::npos) {
+        // Collect databases first to calculate width
+        std::vector<std::string> db_list;
+        try {
+            for (auto& entry : std::filesystem::directory_iterator(".")) {
+                std::string fname = entry.path().filename().string();
+                if (fname.size() > 8 && fname.substr(fname.size()-8) == ".catalog")
+                    db_list.push_back(fname.substr(0, fname.size()-8));
+            }
+        } catch (...) {}
+        std::sort(db_list.begin(), db_list.end());
+
+        size_t col_w = 10;
+        for (auto& d : db_list) col_w = std::max(col_w, d.size() + 2);
+
+        std::string border = "  +" + std::string(col_w + 2, '=') + "+";
+        std::cout << "\n" << border << "\n";
+        std::cout << "  | " << std::left << std::setw(col_w) << "Database" << " |\n";
+        std::cout << border << "\n";
+        for (auto& d : db_list) {
+            std::string label = d + (d == current_db ? " (*)" : "");
+            std::cout << "  | " << std::left << std::setw(col_w) << label << " |\n";
+        }
+        std::cout << border << "\n";
+        std::cout << "  (* = current)\n" << std::endl;
+        return;
+    }
+
+    // CREATE DATABASE name
+    if (upper.substr(0, 15) == "CREATE DATABASE") {
+        std::string name = cmd.substr(15);
+        name.erase(0, name.find_first_not_of(" \t"));
+        name.erase(name.find_last_not_of(" \t;") + 1);
+        if (!name.empty()) {
+            InitDatabase(name);
+            std::cout << "\n  [OK] Database '" << name << "' created and selected.\n" << std::endl;
+        }
+        return;
+    }
+
+    // USE name
+    if (upper.substr(0, 3) == "USE") {
+        std::string name = cmd.substr(3);
+        name.erase(0, name.find_first_not_of(" \t"));
+        name.erase(name.find_last_not_of(" \t;") + 1);
+        if (!name.empty()) {
+            InitDatabase(name);
+            std::cout << "\n  [OK] Switched to database '" << name << "'.\n" << std::endl;
+        }
+        return;
+    }
+
+    // DROP DATABASE name
+    if (upper.substr(0, 13) == "DROP DATABASE") {
+        std::string name = cmd.substr(13);
+        name.erase(0, name.find_first_not_of(" \t"));
+        name.erase(name.find_last_not_of(" \t;") + 1);
+        std::string file_name = name;
+        std::replace(file_name.begin(), file_name.end(), ' ', '_');
+        if (file_name == current_db) {
+            std::cout << "\n  [ERROR] Cannot drop current database!\n" << std::endl;
+        } else {
+            std::filesystem::remove(file_name + ".db");
+            std::filesystem::remove(file_name + ".wal");
+            std::filesystem::remove(file_name + ".catalog");
+            std::cout << "\n  [OK] Database '" << name << "' dropped.\n" << std::endl;
+        }
+        return;
+    }
+}
+
+void SQLMode(Executor*) {
     ClearScreen();
     PrintLine('=');
     std::cout << "         FARHANDB - SQL MODE" << std::endl;
     PrintLine('=');
     std::cout << "\n  Type SQL queries ending with ;" << std::endl;
+    std::cout << "  Database commands: CREATE DATABASE name; USE name; SHOW DATABASES; DROP DATABASE name;" << std::endl;
     std::cout << "  Type 'menu' to go back to main menu." << std::endl;
     std::cout << "  Type 'exit' to quit.\n" << std::endl;
     PrintLine('-');
 
     std::string line, query;
-    std::cout << "\n  farhandb> ";
+    std::cout << "\n  " << current_db_display << "> ";
 
     while (std::getline(std::cin, line)) {
         if (line == "exit" || line == "quit") exit(0);
@@ -436,12 +551,29 @@ void SQLMode(Executor* executor) {
         query += " " + line;
 
         if (!query.empty() && query.find(';') != std::string::npos) {
+            std::string trimmed = query;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+            std::string upper = trimmed;
+            std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+            // Handle database commands
+            if (upper.find("SHOW DATABASES") != std::string::npos ||
+                upper.substr(0, 15) == "CREATE DATABASE" ||
+                upper.substr(0, 3) == "USE" ||
+                upper.substr(0, 13) == "DROP DATABASE") {
+                HandleDatabaseCommand(trimmed);
+                query.clear();
+                PrintLine('-');
+                std::cout << "  " << current_db_display << "> ";
+                continue;
+            }
+
             try {
                 Lexer  lexer(query);
                 auto   tokens = lexer.Tokenize();
                 Parser parser(tokens);
                 auto   stmt   = parser.Parse();
-                auto   result = executor->Execute(stmt);
+                auto   result = g_executor->Execute(stmt);
                 PrintResults(result);
             } catch (const std::exception& e) {
                 std::cout << "\n  [ERROR] " << e.what() << std::endl;
@@ -450,7 +582,7 @@ void SQLMode(Executor* executor) {
             PrintLine('-');
         }
 
-        std::cout << "  farhandb> ";
+        std::cout << "  " << current_db_display << "> ";
     }
 }
 
@@ -458,24 +590,49 @@ void SQLMode(Executor* executor) {
 //  MAIN
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+//  DATABASE MANAGER
+// ─────────────────────────────────────────────
+
+void ShowDatabases() {
+    ClearScreen();
+    PrintLine('=');
+    std::cout << "         FARHANDB - DATABASES" << std::endl;
+    PrintLine('=');
+    std::cout << "\n  Available databases:\n" << std::endl;
+
+    std::set<std::string> dbs;
+    try {
+        for (auto& entry : std::filesystem::directory_iterator(".")) {
+            std::string name = entry.path().filename().string();
+            if (name.size() > 8 && name.substr(name.size()-8) == ".catalog") {
+                dbs.insert(name.substr(0, name.size()-8));
+            }
+        }
+    } catch (...) {}
+
+    if (dbs.empty()) {
+        std::cout << "  (no databases yet)" << std::endl;
+    } else {
+        for (auto& db : dbs) {
+            std::cout << "  " << (db == current_db ? "* " : "  ") << db << std::endl;
+        }
+    }
+    std::cout << "\n  (* = current database)" << std::endl;
+    PauseContinue();
+}
+
 int main() {
-    auto disk_manager = std::make_unique<DiskManager>("farhandb.db");
-    auto bpm          = std::make_unique<BufferPoolManager>(
-                            BUFFER_POOL_SIZE, disk_manager.get());
-    auto wal          = std::make_unique<WAL>("farhandb.wal");
-    auto lock_mgr     = std::make_unique<LockManager>();
-    auto txn_mgr      = std::make_unique<TransactionManager>(wal.get());
-    auto catalog      = std::make_unique<Catalog>("farhandb.catalog");
-    auto executor     = std::make_unique<Executor>(
-                            bpm.get(), catalog.get(),
-                            txn_mgr.get(), lock_mgr.get());
+    // Initialize default database
+    current_db_display = "farhandb";
+    InitDatabase("farhandb");
 
     while (true) {
         PrintBanner();
-        std::cout << "  Welcome! How would you like to use FarhanDB?\n" << std::endl;
-        std::cout << "  1. Beginner Mode  (step-by-step menu)" << std::endl;
-        std::cout << "  2. SQL Mode       (type SQL queries)" << std::endl;
-        std::cout << "  3. Server Mode    (TCP server on port 5555)" << std::endl;
+        std::cout << "  Database: " << current_db_display << "\n" << std::endl;
+        std::cout << "  1. Beginner Mode " << std::endl;
+        std::cout << "  2. SQL Mode " << std::endl;
+        std::cout << "  3. Server Mode " << std::endl;
         std::cout << "  4. Exit" << std::endl;
         PrintLine('-');
         std::cout << "  Enter choice: ";
@@ -485,17 +642,17 @@ int main() {
         std::cin.ignore();
 
         switch (choice) {
-            case 1: BeginnerMode(executor.get(), catalog.get()); break;
-            case 2: SQLMode(executor.get()); break;
+            case 1: BeginnerMode(g_executor.get(), g_catalog.get()); break;
+            case 2: SQLMode(g_executor.get()); break;
             case 3: {
-                TCPServer server(executor.get(), 5555);
+                TCPServer server(g_executor.get(), 5555);
                 server.Start();
                 break;
             }
             case 4:
                 std::cout << "\n  Goodbye!\n" << std::endl;
-                bpm->FlushAllPages();
-                wal->Flush();
+                g_bpm->FlushAllPages();
+                g_wal->Flush();
                 return 0;
             default:
                 std::cout << "\n  Invalid choice." << std::endl;

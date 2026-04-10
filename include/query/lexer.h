@@ -26,6 +26,12 @@ enum class TokenType {
     // NULL / DEFAULT
     NULLVAL, DEFAULT,
 
+    // Subquery
+    IN,
+
+    // Foreign key
+    FOREIGN, REFERENCES,
+
     // Literals
     INTEGER_LITERAL,
     STRING_LITERAL,

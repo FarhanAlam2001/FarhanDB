@@ -14,9 +14,19 @@ struct Column {
     DataType    type;
     int         size;
     bool        is_primary_key;
-    bool        not_null      = false;  // NOT NULL constraint
-    bool        has_default   = false;  // has DEFAULT value
-    std::string default_value = "";     // DEFAULT value
+    bool        not_null        = false;
+    bool        has_default     = false;
+    std::string default_value   = "";
+    // Foreign key
+    bool        is_foreign_key  = false;
+    std::string fk_ref_table    = "";   // referenced table
+    std::string fk_ref_column   = "";   // referenced column
+};
+
+struct IndexInfo {
+    std::string index_name;
+    std::string table_name;
+    std::string column_name;
 };
 
 struct TableSchema {
@@ -24,6 +34,7 @@ struct TableSchema {
     std::vector<Column>      columns;
     uint32_t                 root_page_id;
     std::vector<uint32_t>    page_ids;
+    std::vector<IndexInfo>   indexes;   // indexes on this table
 };
 
 class Catalog {
@@ -35,6 +46,7 @@ public:
     bool            DropTable(const std::string& table_name);
     bool            TableExists(const std::string& table_name) const;
     TableSchema*    GetTable(const std::string& table_name);
+    bool            CreateIndex(const IndexInfo& idx);
     void            Save();
     void            Load();
 

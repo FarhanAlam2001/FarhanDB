@@ -7,6 +7,7 @@
 #include <climits>
 #include <cfloat>
 #include <unordered_map>
+#include <set>
 
 namespace FarhanDB {
 
@@ -26,6 +27,7 @@ ExecutionResult Executor::Execute(std::shared_ptr<Statement> stmt) {
     try {
         switch (stmt->type) {
             case StatementType::CREATE_TABLE: return ExecCreateTable(stmt);
+            case StatementType::CREATE_INDEX:  return ExecCreateIndex(stmt);
             case StatementType::DROP_TABLE:   return ExecDropTable(stmt);
             case StatementType::INSERT:       return ExecInsert(stmt);
             case StatementType::SELECT: {
@@ -92,6 +94,9 @@ ExecutionResult Executor::ExecCreateTable(std::shared_ptr<Statement> stmt) {
         col.not_null       = cd.not_null;
         col.has_default    = cd.has_default;
         col.default_value  = cd.default_value;
+        col.is_foreign_key = cd.is_foreign_key;
+        col.fk_ref_table   = cd.fk_ref_table;
+        col.fk_ref_column  = cd.fk_ref_column;
         schema.columns.push_back(col);
     }
 
@@ -266,6 +271,18 @@ ExecutionResult Executor::ExecInsert(std::shared_ptr<Statement> stmt) {
                     "' cannot be NULL.", {}, {}, ""};
     }
 
+    // Foreign key validation
+    for (size_t i = 0; i < schema->columns.size(); i++) {
+        if (schema->columns[i].is_foreign_key && !final_values[i].empty()) {
+            if (!ValidateForeignKey(schema->columns[i].fk_ref_table,
+                                    schema->columns[i].fk_ref_column,
+                                    final_values[i]))
+                return {false, "Foreign key violation: value '" + final_values[i] +
+                        "' does not exist in " + schema->columns[i].fk_ref_table +
+                        "(" + schema->columns[i].fk_ref_column + ")", {}, {}, ""};
+        }
+    }
+
     std::string data = SerializeRow(*schema, final_values);
 
     for (auto pid : schema->page_ids) {
@@ -340,6 +357,21 @@ ExecutionResult Executor::ExecSelect(std::shared_ptr<Statement> stmt,
             if (idx < (int)full_row.size())
                 selected.push_back(full_row[idx]);
         rows.push_back(selected);
+    }
+
+    // ✅ Subquery IN filter
+    if (stmt->subquery && !stmt->where_in_col.empty()) {
+        std::set<std::string> allowed = ExecuteSubquery(stmt->subquery);
+        int in_idx = -1;
+        for (size_t i = 0; i < col_names.size(); i++)
+            if (col_names[i] == stmt->where_in_col) { in_idx = i; break; }
+        if (in_idx >= 0) {
+            Result filtered;
+            for (auto& row : rows)
+                if (in_idx < (int)row.size() && allowed.count(row[in_idx]))
+                    filtered.push_back(row);
+            rows = filtered;
+        }
     }
 
     // ✅ DISTINCT — remove duplicate rows
@@ -694,6 +726,56 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
     }
 
     return {true, std::to_string(updated) + " row(s) updated.", {}, {}, ""};
+}
+
+// ✅ CREATE INDEX
+ExecutionResult Executor::ExecCreateIndex(std::shared_ptr<Statement> stmt) {
+    if (!catalog_->TableExists(stmt->table_name))
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
+
+    IndexInfo idx;
+    idx.index_name  = stmt->index_name;
+    idx.table_name  = stmt->table_name;
+    idx.column_name = stmt->index_col;
+
+    catalog_->CreateIndex(idx);
+    return {true, "Index '" + stmt->index_name + "' created on " +
+            stmt->table_name + "(" + stmt->index_col + ").", {}, {}, ""};
+}
+
+// ✅ Execute subquery and collect first column values
+std::set<std::string> Executor::ExecuteSubquery(std::shared_ptr<Statement> subq) {
+    std::set<std::string> values;
+    TableSchema* schema = catalog_->GetTable(subq->table_name);
+    if (!schema) return values;
+
+    Result all_rows = ScanTable(schema);
+    for (auto& row : all_rows) {
+        if (MatchesConditions(row, *schema, subq->conditions)) {
+            if (!row.empty()) values.insert(row[0]); // first column
+        }
+    }
+    return values;
+}
+
+// ✅ Validate foreign key — check value exists in referenced table
+bool Executor::ValidateForeignKey(const std::string& ref_table,
+                                   const std::string& ref_col,
+                                   const std::string& value) {
+    TableSchema* schema = catalog_->GetTable(ref_table);
+    if (!schema) return false;
+
+    int col_idx = -1;
+    for (size_t i = 0; i < schema->columns.size(); i++)
+        if (schema->columns[i].name == ref_col) { col_idx = i; break; }
+    if (col_idx < 0) return false;
+
+    Result rows = ScanTable(schema);
+    for (auto& row : rows)
+        if (col_idx < (int)row.size() && row[col_idx] == value)
+            return true;
+
+    return false;
 }
 
 } // namespace FarhanDB

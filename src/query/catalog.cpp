@@ -37,6 +37,14 @@ TableSchema* Catalog::GetTable(const std::string& table_name) {
     return &it->second;
 }
 
+bool Catalog::CreateIndex(const IndexInfo& idx) {
+    auto it = tables_.find(idx.table_name);
+    if (it == tables_.end()) return false;
+    it->second.indexes.push_back(idx);
+    Save();
+    return true;
+}
+
 void Catalog::Save() {
     std::ofstream f(catalog_file_);
     for (auto& [name, schema] : tables_) {
@@ -52,8 +60,15 @@ void Catalog::Save() {
               << (col.is_primary_key ? 1 : 0) << " "
               << (col.not_null ? 1 : 0) << " "
               << (col.has_default ? 1 : 0) << " "
-              << col.default_value << "\n";
+              << col.default_value << " "
+              << (col.is_foreign_key ? 1 : 0) << " "
+              << col.fk_ref_table << " "
+              << col.fk_ref_column << "\n";
         }
+
+        for (auto& idx : schema.indexes)
+            f << "INDEX " << idx.index_name << " " << idx.column_name << "\n";
+
         f << "END\n";
     }
 }
@@ -78,8 +93,7 @@ void Catalog::Load() {
                 size_t count;
                 ss >> count;
                 for (size_t i = 0; i < count; i++) {
-                    uint32_t pid;
-                    ss >> pid;
+                    uint32_t pid; ss >> pid;
                     schema.page_ids.push_back(pid);
                 }
             }
@@ -89,17 +103,26 @@ void Catalog::Load() {
 
             tables_[schema.table_name] = schema;
             current = &tables_[schema.table_name];
+
         } else if (tag == "COL" && current) {
             Column col;
             std::string type_str;
-            int pk, nn, hd;
-            ss >> col.name >> type_str >> col.size >> pk >> nn >> hd;
+            int pk, nn, hd, fk;
+            ss >> col.name >> type_str >> col.size >> pk >> nn >> hd
+               >> col.default_value >> fk >> col.fk_ref_table >> col.fk_ref_column;
             col.type           = (type_str == "INT") ? DataType::INT : DataType::VARCHAR;
             col.is_primary_key = (pk == 1);
             col.not_null       = (nn == 1);
             col.has_default    = (hd == 1);
-            if (col.has_default) ss >> col.default_value;
+            col.is_foreign_key = (fk == 1);
             current->columns.push_back(col);
+
+        } else if (tag == "INDEX" && current) {
+            IndexInfo idx;
+            idx.table_name = current->table_name;
+            ss >> idx.index_name >> idx.column_name;
+            current->indexes.push_back(idx);
+
         } else if (tag == "END") {
             current = nullptr;
         }

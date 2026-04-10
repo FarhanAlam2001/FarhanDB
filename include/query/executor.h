@@ -7,6 +7,7 @@
 #include "transaction/lock_manager.h"
 #include <vector>
 #include <string>
+#include <set>
 
 namespace FarhanDB {
 
@@ -18,7 +19,7 @@ struct ExecutionResult {
     std::string message;
     Result      rows;
     std::vector<std::string> column_names;
-    std::string query_plan;  // ✅ shows optimizer decision
+    std::string query_plan;
 };
 
 class Executor {
@@ -29,8 +30,6 @@ public:
              LockManager*       lock_mgr);
 
     ExecutionResult Execute(std::shared_ptr<Statement> stmt);
-
-    // ✅ EXPLAIN — show query plan without executing
     std::string     Explain(std::shared_ptr<Statement> stmt);
 
 private:
@@ -38,11 +37,12 @@ private:
     Catalog*            catalog_;
     TransactionManager* txn_mgr_;
     LockManager*        lock_mgr_;
-    QueryOptimizer      optimizer_;  // ✅ optimizer instance
+    QueryOptimizer      optimizer_;
     txn_id_t            current_txn_id_;
 
     ExecutionResult ExecCreateTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecDropTable(std::shared_ptr<Statement> stmt);
+    ExecutionResult ExecCreateIndex(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecInsert(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecSelect(std::shared_ptr<Statement> stmt, const QueryPlan& plan);
     ExecutionResult ExecDelete(std::shared_ptr<Statement> stmt, const QueryPlan& plan);
@@ -58,11 +58,17 @@ private:
                                       const TableSchema& schema,
                                       const std::vector<Condition>& conditions);
     Result          ScanTable(TableSchema* schema);
-
-    // ✅ Optimized primary key scan
     Result          PKScan(TableSchema* schema,
                            const std::string& pk_col,
                            const std::string& pk_value);
+
+    // Subquery helper — collect all values from first column of result
+    std::set<std::string> ExecuteSubquery(std::shared_ptr<Statement> subq);
+
+    // Foreign key validation
+    bool            ValidateForeignKey(const std::string& ref_table,
+                                       const std::string& ref_col,
+                                       const std::string& value);
 };
 
 } // namespace FarhanDB
