@@ -35,6 +35,9 @@ enum class TokenType {
     // BETWEEN / LIKE
     BETWEEN, LIKE,
 
+    // ALTER TABLE
+    ALTER, ADD, COLUMN,
+
     // Literals
     INTEGER_LITERAL,
     STRING_LITERAL,

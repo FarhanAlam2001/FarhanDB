@@ -34,6 +34,7 @@ std::shared_ptr<Statement> Parser::Parse() {
     if (Check(TokenType::UPDATE))   return ParseUpdate();
     if (Check(TokenType::DELETE))   return ParseDelete();
     if (Check(TokenType::DROP))     return ParseDropTable();
+    if (Check(TokenType::ALTER))    return ParseAlterTable();
     if (Check(TokenType::CREATE)) {
         Consume();
         if (Check(TokenType::INDEX)) return ParseCreateIndex();
@@ -290,9 +291,22 @@ std::shared_ptr<Statement> Parser::ParseUpdate() {
     Expect(TokenType::UPDATE);
     stmt->table_name = Expect(TokenType::IDENTIFIER).value;
     Expect(TokenType::SET);
-    stmt->set_column = Expect(TokenType::IDENTIFIER).value;
-    Expect(TokenType::EQ);
-    stmt->set_value  = Consume().value;
+
+    // Parse one or more col = val pairs
+    do {
+        std::string col = Expect(TokenType::IDENTIFIER).value;
+        Expect(TokenType::EQ);
+        std::string val = Consume().value;
+        stmt->set_columns.push_back(col);
+        stmt->set_values.push_back(val);
+    } while (Match(TokenType::COMMA));
+
+    // Keep single-column compat
+    if (!stmt->set_columns.empty()) {
+        stmt->set_column = stmt->set_columns[0];
+        stmt->set_value  = stmt->set_values[0];
+    }
+
     if (Check(TokenType::WHERE))
         stmt->conditions = ParseWhere();
     return stmt;
@@ -411,6 +425,48 @@ std::vector<Condition> Parser::ParseWhere() {
              !Check(TokenType::LIMIT) &&
              !Check(TokenType::SEMICOLON));
     return conditions;
+}
+
+std::shared_ptr<Statement> Parser::ParseAlterTable() {
+    auto stmt = std::make_shared<Statement>();
+    stmt->type = StatementType::ALTER_TABLE;
+    Expect(TokenType::ALTER);
+    Expect(TokenType::TABLE);
+    stmt->table_name = Expect(TokenType::IDENTIFIER).value;
+
+    if (Check(TokenType::ADD)) {
+        Consume();
+        Match(TokenType::COLUMN); // COLUMN keyword is optional
+        stmt->alter_action = "ADD";
+        ColumnDef col;
+        col.name = Expect(TokenType::IDENTIFIER).value;
+        if (Check(TokenType::INT)) {
+            Consume(); col.type = "INT"; col.size = 4;
+        } else if (Check(TokenType::VARCHAR)) {
+            Consume(); col.type = "VARCHAR";
+            Expect(TokenType::LPAREN);
+            col.size = std::stoi(Consume().value);
+            Expect(TokenType::RPAREN);
+        }
+        if (Check(TokenType::DEFAULT)) {
+            Consume();
+            col.has_default   = true;
+            col.default_value = Consume().value;
+        }
+        if (Check(TokenType::NOT)) {
+            Consume(); Expect(TokenType::NULLVAL);
+            col.not_null = true;
+        }
+        stmt->alter_column = col;
+    } else if (Check(TokenType::DROP)) {
+        Consume();
+        Match(TokenType::COLUMN);
+        stmt->alter_action   = "DROP";
+        stmt->alter_col_name = Expect(TokenType::IDENTIFIER).value;
+    } else {
+        throw std::runtime_error("ALTER TABLE: expected ADD or DROP");
+    }
+    return stmt;
 }
 
 } // namespace FarhanDB

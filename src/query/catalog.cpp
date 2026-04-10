@@ -60,10 +60,10 @@ void Catalog::Save() {
               << (col.is_primary_key ? 1 : 0) << " "
               << (col.not_null ? 1 : 0) << " "
               << (col.has_default ? 1 : 0) << " "
-              << col.default_value << " "
+              << (col.has_default ? col.default_value : "-") << " "
               << (col.is_foreign_key ? 1 : 0) << " "
-              << col.fk_ref_table << " "
-              << col.fk_ref_column << "\n";
+              << (col.is_foreign_key ? col.fk_ref_table : "-") << " "
+              << (col.is_foreign_key ? col.fk_ref_column : "-") << "\n";
         }
 
         for (auto& idx : schema.indexes)
@@ -106,15 +106,19 @@ void Catalog::Load() {
 
         } else if (tag == "COL" && current) {
             Column col;
-            std::string type_str;
+            std::string type_str, default_val, fk_table, fk_col;
             int pk, nn, hd, fk;
             ss >> col.name >> type_str >> col.size >> pk >> nn >> hd
-               >> col.default_value >> fk >> col.fk_ref_table >> col.fk_ref_column;
+               >> default_val >> fk >> fk_table >> fk_col;
             col.type           = (type_str == "INT") ? DataType::INT : DataType::VARCHAR;
             col.is_primary_key = (pk == 1);
             col.not_null       = (nn == 1);
             col.has_default    = (hd == 1);
             col.is_foreign_key = (fk == 1);
+            // Only use values if not placeholder
+            if (hd == 1 && default_val != "-") col.default_value = default_val;
+            if (fk == 1 && fk_table != "-")   col.fk_ref_table  = fk_table;
+            if (fk == 1 && fk_col != "-")     col.fk_ref_column = fk_col;
             current->columns.push_back(col);
 
         } else if (tag == "INDEX" && current) {

@@ -102,7 +102,7 @@ void PrintBanner() {
  |_|  \__,_|_|  |_| |_|\__,_|_| |_|____/|____/
 )" << std::endl;
     PrintLine('=');
-    std::cout << "     Advanced C++ Database Engine v1.9.0" << std::endl;
+    std::cout << "     Advanced C++ Database Engine v2.0.0" << std::endl;
     PrintLine('=');
     std::cout << std::endl;
 }

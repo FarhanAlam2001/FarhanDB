@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Language: C++17](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Mac-lightgrey.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.9.0-green.svg)]()
+[![Version](https://img.shields.io/badge/Version-2.0.0-green.svg)]()
 
 ## About
 
@@ -35,12 +35,16 @@ This project was built to deeply understand how real-world databases like MySQL 
 - **Query Optimizer** — Primary key scan, predicate pushdown, join reordering
 - **ORDER BY / LIMIT / DISTINCT** — Sorting, pagination and deduplication
 - **GROUP BY / HAVING** — Grouping and group filtering
-- **OR Conditions** — Multiple WHERE conditions with AND/OR
+- **OR / AND Conditions** — Multiple WHERE conditions
+- **BETWEEN / LIKE** — Range queries and pattern matching
 - **NOT NULL / DEFAULT** — Column constraints and default values
 - **Subqueries** — WHERE col IN (SELECT ...)
 - **Foreign Keys** — Referential integrity enforcement
 - **Indexes** — CREATE INDEX on any column
+- **UPDATE Multiple Columns** — SET col1 = val1, col2 = val2
+- **ALTER TABLE** — ADD COLUMN and DROP COLUMN
 - **Multiple Databases** — CREATE DATABASE, USE, SHOW DATABASES, DROP DATABASE
+- **SQL Comments** — Support for -- comment syntax
 - **TCP Network Server** — Accept SQL connections on port 5555
 - **Beginner Mode** — Step-by-step menu interface for non-SQL users
 - **SQL Mode** — Direct SQL query interface
@@ -64,8 +68,14 @@ SELECT DISTINCT age FROM students;
 SELECT * FROM students ORDER BY age DESC;
 SELECT * FROM students LIMIT 5;
 
--- Update records
+-- BETWEEN and LIKE
+SELECT * FROM students WHERE age BETWEEN 18 AND 25;
+SELECT * FROM students WHERE name LIKE 'F%';
+SELECT * FROM students WHERE name LIKE '%han';
+
+-- Update records (single or multiple columns)
 UPDATE students SET age = 22 WHERE id = 1;
+UPDATE students SET name = 'Ahmed', age = 20 WHERE id = 1;
 
 -- Delete records
 DELETE FROM students WHERE id = 1;
@@ -98,6 +108,10 @@ CREATE TABLE orders (id INT PRIMARY KEY, student_id INT REFERENCES students(id))
 
 -- Indexes
 CREATE INDEX idx_name ON students(name);
+
+-- ALTER TABLE
+ALTER TABLE students ADD COLUMN email VARCHAR(100);
+ALTER TABLE students DROP COLUMN email;
 
 -- Transactions
 BEGIN;
@@ -263,15 +277,21 @@ FarhanDB/
 - [x] ACID transactions
 - [x] Beginner mode interface
 - [x] Multi-page table scanning
-- [x] JOIN support
+- [x] JOIN support (fixed column ordering)
 - [x] Aggregate functions (COUNT, SUM, AVG, MAX, MIN)
 - [x] Query optimizer
 - [x] ORDER BY, LIMIT, DISTINCT
 - [x] GROUP BY, HAVING, OR conditions
+- [x] BETWEEN, LIKE, SQL comments
 - [x] NOT NULL, DEFAULT constraints
 - [x] Subqueries, Foreign keys, Indexes
+- [x] UPDATE multiple columns
+- [x] ALTER TABLE (ADD/DROP COLUMN)
 - [x] Multiple database support
 - [x] Network/TCP interface
+- [ ] Qt GUI
+- [ ] Python client library
+- [ ] Real index usage during SELECT
 
 ---
 

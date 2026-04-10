@@ -98,6 +98,9 @@ TokenType Lexer::KeywordType(const std::string& word) const {
     if (upper == "REFERENCES") return TokenType::REFERENCES;
     if (upper == "BETWEEN")    return TokenType::BETWEEN;
     if (upper == "LIKE")       return TokenType::LIKE;
+    if (upper == "ALTER")      return TokenType::ALTER;
+    if (upper == "ADD")        return TokenType::ADD;
+    if (upper == "COLUMN")     return TokenType::COLUMN;
 
     return TokenType::IDENTIFIER;
 }

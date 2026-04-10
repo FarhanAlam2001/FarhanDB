@@ -29,6 +29,7 @@ ExecutionResult Executor::Execute(std::shared_ptr<Statement> stmt) {
         switch (stmt->type) {
             case StatementType::CREATE_TABLE: return ExecCreateTable(stmt);
             case StatementType::CREATE_INDEX:  return ExecCreateIndex(stmt);
+            case StatementType::ALTER_TABLE:   return ExecAlterTable(stmt);
             case StatementType::DROP_TABLE:   return ExecDropTable(stmt);
             case StatementType::INSERT:       return ExecInsert(stmt);
             case StatementType::SELECT: {
@@ -723,8 +724,20 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
 
     int updated = 0;
 
+    // Build list of (col_idx, value) pairs for all set columns
+    std::vector<std::pair<int,std::string>> set_pairs;
+    if (!stmt->set_columns.empty()) {
+        for (size_t i = 0; i < stmt->set_columns.size(); i++) {
+            int idx = -1;
+            for (size_t j = 0; j < schema->columns.size(); j++)
+                if (schema->columns[j].name == stmt->set_columns[i]) { idx = j; break; }
+            if (idx >= 0) set_pairs.push_back({idx, stmt->set_values[i]});
+        }
+    } else {
+        set_pairs.push_back({set_col_idx, stmt->set_value});
+    }
+
     if (plan.type == PlanType::PRIMARY_KEY_SCAN) {
-        // ✅ Optimized update
         int pk_idx = -1;
         for (size_t i = 0; i < schema->columns.size(); i++)
             if (schema->columns[i].name == plan.pk_column) { pk_idx = i; break; }
@@ -740,7 +753,8 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
                 if (page->GetRecord(s, buf, len)) {
                     Row row = DeserializeRow(*schema, buf, len);
                     if (pk_idx < (int)row.size() && row[pk_idx] == plan.pk_value) {
-                        row[set_col_idx] = stmt->set_value;
+                        for (auto& p : set_pairs)
+                            if (p.first < (int)row.size()) row[p.first] = p.second;
                         page->DeleteRecord(s);
                         std::string new_data = SerializeRow(*schema, row);
                         page->InsertRecord(new_data.c_str(), (uint16_t)new_data.size());
@@ -764,7 +778,8 @@ ExecutionResult Executor::ExecUpdate(std::shared_ptr<Statement> stmt,
                 if (page->GetRecord(s, buf, len)) {
                     Row row = DeserializeRow(*schema, buf, len);
                     if (MatchesConditions(row, *schema, stmt->conditions)) {
-                        row[set_col_idx] = stmt->set_value;
+                        for (auto& p : set_pairs)
+                            if (p.first < (int)row.size()) row[p.first] = p.second;
                         page->DeleteRecord(s);
                         std::string new_data = SerializeRow(*schema, row);
                         page->InsertRecord(new_data.c_str(), (uint16_t)new_data.size());
@@ -827,6 +842,51 @@ bool Executor::ValidateForeignKey(const std::string& ref_table,
             return true;
 
     return false;
+}
+
+ExecutionResult Executor::ExecAlterTable(std::shared_ptr<Statement> stmt) {
+    TableSchema* schema = catalog_->GetTable(stmt->table_name);
+    if (!schema)
+        return {false, "Table '" + stmt->table_name + "' does not exist.", {}, {}, ""};
+
+    if (stmt->alter_action == "ADD") {
+        // Check column doesn't already exist
+        for (auto& col : schema->columns)
+            if (col.name == stmt->alter_column.name)
+                return {false, "Column '" + stmt->alter_column.name + "' already exists.", {}, {}, ""};
+
+        Column col;
+        col.name           = stmt->alter_column.name;
+        col.type           = (stmt->alter_column.type == "INT") ? DataType::INT : DataType::VARCHAR;
+        col.size           = stmt->alter_column.size;
+        col.is_primary_key = false;
+        col.not_null       = stmt->alter_column.not_null;
+        col.has_default    = stmt->alter_column.has_default;
+        col.default_value  = stmt->alter_column.default_value;
+        schema->columns.push_back(col);
+        catalog_->Save();
+        return {true, "Column '" + col.name + "' added to '" + stmt->table_name + "'.", {}, {}, ""};
+
+    } else if (stmt->alter_action == "DROP") {
+        // Cannot drop primary key column
+        for (auto& col : schema->columns)
+            if (col.name == stmt->alter_col_name && col.is_primary_key)
+                return {false, "Cannot drop primary key column.", {}, {}, ""};
+
+        size_t before = schema->columns.size();
+        schema->columns.erase(
+            std::remove_if(schema->columns.begin(), schema->columns.end(),
+                [&](const Column& c) { return c.name == stmt->alter_col_name; }),
+            schema->columns.end());
+
+        if (schema->columns.size() == before)
+            return {false, "Column '" + stmt->alter_col_name + "' not found.", {}, {}, ""};
+
+        catalog_->Save();
+        return {true, "Column '" + stmt->alter_col_name + "' dropped from '" + stmt->table_name + "'.", {}, {}, ""};
+    }
+
+    return {false, "Unknown ALTER action.", {}, {}, ""};
 }
 
 } // namespace FarhanDB

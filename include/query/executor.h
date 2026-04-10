@@ -43,6 +43,7 @@ private:
     ExecutionResult ExecCreateTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecDropTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecCreateIndex(std::shared_ptr<Statement> stmt);
+    ExecutionResult ExecAlterTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecInsert(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecSelect(std::shared_ptr<Statement> stmt, const QueryPlan& plan);
     ExecutionResult ExecDelete(std::shared_ptr<Statement> stmt, const QueryPlan& plan);

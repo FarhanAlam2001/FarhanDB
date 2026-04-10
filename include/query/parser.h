@@ -10,6 +10,7 @@ enum class StatementType {
     SELECT, INSERT, UPDATE, DELETE,
     CREATE_TABLE, DROP_TABLE,
     CREATE_INDEX,
+    ALTER_TABLE,
     BEGIN_TXN, COMMIT_TXN, ROLLBACK_TXN
 };
 
@@ -40,8 +41,14 @@ struct Statement {
     std::vector<std::string>    values;
     std::vector<ColumnDef>      column_defs;
     std::vector<Condition>      conditions;
+
+    // Single column UPDATE (backward compat)
     std::string                 set_column;
     std::string                 set_value;
+
+    // Multi-column UPDATE
+    std::vector<std::string>    set_columns;
+    std::vector<std::string>    set_values;
 
     // Aggregate support
     std::string                 aggregate_func;
@@ -71,6 +78,11 @@ struct Statement {
     // CREATE INDEX
     std::string                 index_name;
     std::string                 index_col;
+
+    // ALTER TABLE
+    std::string                 alter_action;  // "ADD" or "DROP"
+    ColumnDef                   alter_column;  // column to add
+    std::string                 alter_col_name; // column name to drop
 };
 
 class Parser {
@@ -97,6 +109,7 @@ private:
     std::shared_ptr<Statement>  ParseCreateTable();
     std::shared_ptr<Statement>  ParseDropTable();
     std::shared_ptr<Statement>  ParseCreateIndex();
+    std::shared_ptr<Statement>  ParseAlterTable();
     std::vector<Condition>      ParseWhere();
 
     bool IsAggregateToken(TokenType t) const;
