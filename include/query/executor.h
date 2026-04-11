@@ -5,9 +5,12 @@
 #include "storage/buffer_pool.h"
 #include "transaction/transaction_manager.h"
 #include "transaction/lock_manager.h"
+#include "index/btree.h"
 #include <vector>
 #include <string>
 #include <set>
+#include <memory>
+#include <unordered_map>
 
 namespace FarhanDB {
 
@@ -40,6 +43,10 @@ private:
     QueryOptimizer      optimizer_;
     txn_id_t            current_txn_id_;
 
+    // ── Index B+ Trees (keyed by "table.column") ─────────────────────────────
+    std::unordered_map<std::string, std::unique_ptr<BTree>> index_trees_;
+
+    // ── Statement executors ──────────────────────────────────────────────────
     ExecutionResult ExecCreateTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecDropTable(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecCreateIndex(std::shared_ptr<Statement> stmt);
@@ -51,25 +58,45 @@ private:
     ExecutionResult ExecAggregate(std::shared_ptr<Statement> stmt);
     ExecutionResult ExecJoin(std::shared_ptr<Statement> stmt);
 
-    std::string     SerializeRow(const TableSchema& schema,
-                                 const std::vector<std::string>& values);
-    Row             DeserializeRow(const TableSchema& schema,
-                                   const char* data, uint16_t length);
-    bool            MatchesConditions(const Row& row,
-                                      const TableSchema& schema,
-                                      const std::vector<Condition>& conditions);
-    Result          ScanTable(TableSchema* schema);
-    Result          PKScan(TableSchema* schema,
-                           const std::string& pk_col,
-                           const std::string& pk_value);
+    // ── Row helpers ──────────────────────────────────────────────────────────
+    std::string SerializeRow(const TableSchema& schema,
+                             const std::vector<std::string>& values);
+    Row         DeserializeRow(const TableSchema& schema,
+                               const char* data, uint16_t length);
+    bool        MatchesConditions(const Row& row,
+                                  const TableSchema& schema,
+                                  const std::vector<Condition>& conditions);
+    Result      ScanTable(TableSchema* schema);
+    Result      PKScan(TableSchema* schema,
+                       const std::string& pk_col,
+                       const std::string& pk_value);
 
-    // Subquery helper — collect all values from first column of result
+    // ── Index helpers ────────────────────────────────────────────────────────
+
+    // Fetch or load a BTree for table.column (loads from disk if root_page_id valid)
+    BTree*  GetOrLoadIndex(const std::string& table,
+                           const std::string& col,
+                           uint32_t root_page_id);
+
+    // Use B+ Tree to fetch a single row matching col = value
+    Result  IndexScan(TableSchema* schema,
+                      const std::string& col,
+                      const std::string& value,
+                      uint32_t index_root_page);
+
+    // Called after every INSERT to keep all indexes current
+    void    UpdateIndexesOnInsert(TableSchema* schema,
+                                  const std::vector<std::string>& values,
+                                  RID rid);
+
+    // Called after every DELETE to remove stale index entries
+    void    UpdateIndexesOnDelete(TableSchema* schema, const Row& row);
+
+    // ── Subquery / FK helpers ────────────────────────────────────────────────
     std::set<std::string> ExecuteSubquery(std::shared_ptr<Statement> subq);
-
-    // Foreign key validation
-    bool            ValidateForeignKey(const std::string& ref_table,
-                                       const std::string& ref_col,
-                                       const std::string& value);
+    bool    ValidateForeignKey(const std::string& ref_table,
+                               const std::string& ref_col,
+                               const std::string& value);
 };
 
 } // namespace FarhanDB

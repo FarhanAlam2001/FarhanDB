@@ -19,14 +19,17 @@ struct Column {
     std::string default_value   = "";
     // Foreign key
     bool        is_foreign_key  = false;
-    std::string fk_ref_table    = "";   // referenced table
-    std::string fk_ref_column   = "";   // referenced column
+    std::string fk_ref_table    = "";
+    std::string fk_ref_column   = "";
 };
 
 struct IndexInfo {
     std::string index_name;
     std::string table_name;
     std::string column_name;
+    // Root page of the B+ Tree for this index.
+    // UINT32_MAX means the index has not been built yet.
+    uint32_t    root_page_id    = UINT32_MAX;
 };
 
 struct TableSchema {
@@ -34,7 +37,7 @@ struct TableSchema {
     std::vector<Column>      columns;
     uint32_t                 root_page_id;
     std::vector<uint32_t>    page_ids;
-    std::vector<IndexInfo>   indexes;   // indexes on this table
+    std::vector<IndexInfo>   indexes;
 };
 
 class Catalog {
