@@ -291,7 +291,7 @@ FarhanDB/
 - [x] Network/TCP interface
 - [ ] Qt GUI
 - [ ] Python client library
-- [ ] Real index usage during SELECT
+- [X] Real index usage during SELECT
 
 ---
 
