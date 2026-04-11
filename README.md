@@ -24,6 +24,19 @@ This project was built to deeply understand how real-world databases like MySQL 
 
 ---
 
+## 🌍 Unique Position
+
+There is no other open-source database where:
+
+- The entire engine is written from scratch in **C++17**
+- A **native Qt6 GUI** is built by the same author as the engine
+- **CLI + GUI + TCP Server** ship as one unified package
+- The whole thing was built by **a single developer**
+
+FarhanDB occupies a category of one.
+
+---
+
 ## GUI Preview
 
 FarhanDB now ships with a full desktop application built with Qt 6:
