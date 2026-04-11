@@ -304,7 +304,7 @@ FarhanDB/
 - [x] Network/TCP interface
 - [x] Qt6 Desktop GUI with light/dark themes
 - [ ] Python client library
-- [ ] Real index usage during SELECT
+- [x] Real index usage during SELECT
 - [ ] Performance benchmarks
 
 ---
