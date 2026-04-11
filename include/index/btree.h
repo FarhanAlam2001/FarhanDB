@@ -24,21 +24,23 @@ struct BTreeNode {
 
 class BTree {
 public:
-    BTree(const std::string& name, BufferPoolManager* bpm);
+    // existing_root = INVALID_PAGE_ID → create fresh tree
+    // existing_root = valid id        → load tree from disk
+    BTree(const std::string& name, BufferPoolManager* bpm,
+          page_id_t existing_root = INVALID_PAGE_ID);
 
-    bool            Insert(KeyType key, RID rid);
-    bool            Delete(KeyType key);
+    bool                        Insert(KeyType key, RID rid);
+    bool                        Delete(KeyType key);
     std::optional<RID>          Search(KeyType key);
     std::vector<RID>            RangeSearch(KeyType low, KeyType high);
 
-    page_id_t       GetRootPageId() const { return root_page_id_; }
+    page_id_t   GetRootPageId() const { return root_page_id_; }
 
 private:
     std::string         name_;
     BufferPoolManager*  bpm_;
     page_id_t           root_page_id_;
 
-    // Internal helpers
     BTreeNode*  FetchNode(page_id_t page_id);
     void        UnpinNode(page_id_t page_id, bool dirty);
     page_id_t   AllocateNode();

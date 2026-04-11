@@ -21,8 +21,7 @@ bool QueryOptimizer::HasPKEquality(std::shared_ptr<Statement> stmt,
 size_t QueryOptimizer::EstimateRowCount(const std::string& table_name) {
     TableSchema* schema = catalog_->GetTable(table_name);
     if (!schema) return 0;
-    // Estimate: each page holds ~50 rows on average
-    return schema->page_ids.size() * 50;
+    return schema->page_ids.size() * 50; // ~50 rows per page estimate
 }
 
 QueryPlan QueryOptimizer::Optimize(std::shared_ptr<Statement> stmt) {
@@ -30,7 +29,7 @@ QueryPlan QueryOptimizer::Optimize(std::shared_ptr<Statement> stmt) {
     plan.table_name = stmt->table_name;
     plan.has_where  = !stmt->conditions.empty();
 
-    // Aggregate queries — always full scan
+    // ── Aggregate: always full scan ──────────────────────────────────────────
     if (!stmt->aggregate_func.empty()) {
         plan.type        = PlanType::AGGREGATE_SCAN;
         plan.explanation = "Aggregate scan on " + stmt->table_name +
@@ -38,14 +37,11 @@ QueryPlan QueryOptimizer::Optimize(std::shared_ptr<Statement> stmt) {
         return plan;
     }
 
-    // JOIN queries
+    // ── JOIN: nested loop with size estimate ─────────────────────────────────
     if (!stmt->join_table.empty()) {
         plan.type = PlanType::JOIN_SCAN;
-
-        // Optimization: put smaller table on left for nested loop join
         size_t left_count  = EstimateRowCount(stmt->table_name);
         size_t right_count = EstimateRowCount(stmt->join_table);
-
         if (right_count < left_count) {
             plan.explanation = "Nested Loop Join: " + stmt->join_table +
                                " (smaller, " + std::to_string(right_count) +
@@ -60,15 +56,13 @@ QueryPlan QueryOptimizer::Optimize(std::shared_ptr<Statement> stmt) {
         return plan;
     }
 
-    // SELECT/DELETE/UPDATE — check for primary key optimization
     TableSchema* schema = catalog_->GetTable(stmt->table_name);
     if (schema) {
-        // Find primary key column
-        std::string pk_col = "";
+        // ── Priority 1: Primary key equality scan ────────────────────────────
+        std::string pk_col;
         for (auto& col : schema->columns)
             if (col.is_primary_key) { pk_col = col.name; break; }
 
-        // Check if WHERE uses primary key with equality
         std::string pk_value;
         if (!pk_col.empty() && HasPKEquality(stmt, pk_col, pk_value)) {
             plan.type        = PlanType::PRIMARY_KEY_SCAN;
@@ -76,17 +70,38 @@ QueryPlan QueryOptimizer::Optimize(std::shared_ptr<Statement> stmt) {
             plan.pk_value    = pk_value;
             plan.explanation = "Primary key scan on " + stmt->table_name +
                                " WHERE " + pk_col + " = " + pk_value +
-                               " (skips full table scan)";
+                               " (early exit on match)";
             return plan;
+        }
+
+        // ── Priority 2: B+ Tree index scan ──────────────────────────────────
+        // Check each WHERE equality condition against known indexes
+        for (const auto& cond : stmt->conditions) {
+            if (cond.op != "=") continue; // index only helps with equality
+            for (const auto& idx : schema->indexes) {
+                if (idx.column_name == cond.column &&
+                    idx.root_page_id != UINT32_MAX) {
+                    plan.type             = PlanType::INDEX_SCAN;
+                    plan.index_col        = cond.column;
+                    plan.index_value      = cond.value;
+                    plan.index_root_page  = idx.root_page_id;
+                    plan.explanation      = "B+ Tree index scan on " +
+                                           stmt->table_name + " using index on '" +
+                                           cond.column + "'" +
+                                           " WHERE " + cond.column +
+                                           " = " + cond.value +
+                                           " (O(log n) lookup)";
+                    return plan;
+                }
+            }
         }
     }
 
-    // Default — full table scan
+    // ── Default: full table scan ─────────────────────────────────────────────
     plan.type        = PlanType::FULL_SCAN;
     plan.explanation = "Full table scan on " + stmt->table_name;
     if (plan.has_where)
-        plan.explanation += " with filter on WHERE clause";
-
+        plan.explanation += " with WHERE filter";
     return plan;
 }
 
@@ -95,13 +110,13 @@ std::string QueryOptimizer::ExplainPlan(const QueryPlan& plan) {
     ss << "\n  [Query Plan]\n";
     ss << "  Type       : ";
     switch (plan.type) {
-        case PlanType::FULL_SCAN:        ss << "Full Table Scan"; break;
-        case PlanType::PRIMARY_KEY_SCAN: ss << "Primary Key Scan (Optimized)"; break;
-        case PlanType::JOIN_SCAN:        ss << "Nested Loop Join"; break;
-        case PlanType::AGGREGATE_SCAN:   ss << "Aggregate Scan"; break;
+        case PlanType::FULL_SCAN:        ss << "Full Table Scan";               break;
+        case PlanType::PRIMARY_KEY_SCAN: ss << "Primary Key Scan (Optimized)";  break;
+        case PlanType::INDEX_SCAN:       ss << "B+ Tree Index Scan (O(log n))"; break;
+        case PlanType::JOIN_SCAN:        ss << "Nested Loop Join";               break;
+        case PlanType::AGGREGATE_SCAN:   ss << "Aggregate Scan";                break;
     }
-    ss << "\n";
-    ss << "  Details    : " << plan.explanation << "\n";
+    ss << "\n  Details    : " << plan.explanation << "\n";
     return ss.str();
 }
 

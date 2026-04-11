@@ -14,6 +14,7 @@ set(ENGINE_SOURCES
     src/storage/disk_manager.cpp
     src/storage/buffer_pool.cpp
     src/storage/wal.cpp
+    src/index/btree.cpp
     src/query/lexer.cpp
     src/query/parser.cpp
     src/query/catalog.cpp
